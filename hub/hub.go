@@ -16,7 +16,7 @@ type Conn interface {
 
 type MessageEntry struct {
 	RoomId, MessageId, UserId int
-	Timestamp time.Time
+	Timestamp int
 	Data interface {}
 }
 
@@ -42,6 +42,9 @@ type Hub interface {
 
 	Connect (c Conn) error
 	Disconnect (connId int)
+	IsConnected (connId int) bool
+	Connection (connId int) Conn
+
 	NewRoom (roomId, lastMessageId int, userIds []int)
 	DeleteRoom (roomId int)
 	EnterRoom (userId, roomId int) error
@@ -56,9 +59,11 @@ type Hub interface {
 
 	Messages (userId, roomId, firstId, count int) (MessageList, error)
 	UserRoomIds (userId int) []int
+	IsInRoom (userId, roomId int) bool
 	OnlineUserIds () []int
 	RoomUserIds (roomId int) []int
 	UserConnIds (userId int) []int
+	UserIsConnected (userId int) bool
 }
 
 
@@ -69,14 +74,18 @@ type MessageStorage interface {
 }
 
 type memStorageRec struct {
+	lock sync.RWMutex
 	rooms map[int]MessageList
 }
 
 func NewMemStorage () MessageStorage {
-	return &memStorageRec {make(map[int]MessageList)}
+	return &memStorageRec {rooms: make(map[int]MessageList)}
 }
 
 func (msr *memStorageRec) Save (messages MessageList) error {
+	msr.lock.Lock()
+	defer msr.lock.Unlock()
+
 	for _, message := range messages {
 		msr.rooms[message.RoomId] = append(msr.rooms[message.RoomId], message)
 	}
@@ -85,6 +94,9 @@ func (msr *memStorageRec) Save (messages MessageList) error {
 }
 
 func (msr *memStorageRec) List (roomId, firstId, count int) (MessageList, error) {
+	msr.lock.RLock()
+	defer msr.lock.RUnlock()
+
 	firstIndex := firstId - 1
 	if firstIndex < 0 {
 		firstIndex = 0
@@ -94,6 +106,9 @@ func (msr *memStorageRec) List (roomId, firstId, count int) (MessageList, error)
 }
 
 func (msr *memStorageRec) Update (roomId, messageId int, data interface {}) (bool, error) {
+	msr.lock.Lock()
+	defer msr.lock.Unlock()
+
 	index := messageId - 1
 	messages := msr.rooms[roomId]
 	if index >= len(messages) {
@@ -405,6 +420,20 @@ func (h *hubRec) Disconnect (connId int) {
 	}
 }
 
+func (h *hubRec) IsConnected (connId int) bool {
+	h.connLock20.RLock()
+	defer h.connLock20.RUnlock()
+	_, is := h.conns[connId]
+	return is
+}
+
+func (h *hubRec) Connection (connId int) Conn {
+	h.connLock20.RLock()
+	defer h.connLock20.RUnlock()
+	return h.conns[connId]
+}
+
+
 func (h *hubRec) NewRoom (roomId, lastMessageId int, userIds []int) {
 	h.roomLock30.Lock()
 	defer h.roomLock30.Unlock()
@@ -512,7 +541,7 @@ func (h *hubRec) NewMessage (connId, roomId int, data interface {}) (messageId i
 		RoomId: roomId,
 		MessageId: room.LastMessageId,
 		UserId: userId,
-		Timestamp: time.Now(),
+		Timestamp: int(time.Now().Unix()),
 		Data: data,
 	}
 
@@ -679,6 +708,25 @@ func (h *hubRec) UserRoomIds (userId int) []int {
 	return roomIds
 }
 
+func (h *hubRec) IsInRoom (userId, roomId int) bool {
+	h.roomLock30.RLock()
+	defer h.roomLock30.RUnlock()
+
+	room := h.rooms[roomId]
+	if room == nil {
+		return false
+	}
+
+	for _, uid := range room.UserIds {
+		if uid == userId {
+			return true
+		}
+	}
+
+	return false
+}
+
+
 func (h *hubRec) OnlineUserIds () []int {
 	if !h.isRunning {
 		return make([]int, 0)
@@ -722,3 +770,13 @@ func (h *hubRec) UserConnIds (userId int) []int {
 	return h.userConnIds[userId]
 }
 
+func (h *hubRec) UserIsConnected (userId int) bool {
+	if !h.isRunning {
+		return false
+	}
+
+	h.connLock20.RLock()
+	defer h.connLock20.RUnlock()
+
+	return (len(h.userConnIds[userId]) > 0)
+}
