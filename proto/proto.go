@@ -10,6 +10,53 @@ import (
 	"fmt"
 )
 
+type PermFlags = int
+
+const (
+	listRoomsPerm = 1 << iota
+	createRoomPerm
+	allGlobalPerms = listRoomsPerm | createRoomPerm
+)
+
+const (
+	readPerm = 1 << iota
+	writePerm
+	allRoomPerms = readPerm | writePerm
+)
+
+type AccessController interface {
+	GlobalPerms (userId int) PermFlags
+	RoomPerms (userId, roomId int) PermFlags
+	HasGlobalPerm (userId, perm int) bool
+	HasRoomPerm (userId, roomId, perm int) bool
+	NewRoom (userId, roomId int)
+}
+
+type accessRec struct {}
+
+func NewAccessController () AccessController {
+	return &accessRec {}
+}
+
+func (ar *accessRec) GlobalPerms (userId int) PermFlags {
+	return allGlobalPerms
+}
+
+func (ar *accessRec) RoomPerms (userId, roomId int) PermFlags {
+	return allRoomPerms
+}
+
+func (ar *accessRec) HasGlobalPerm (userId, perm int) bool {
+	return (perm & allGlobalPerms != 0)
+}
+
+func (ar *accessRec) HasRoomPerm (userId, roomId, perm int) bool {
+	return (perm & allRoomPerms != 0)
+}
+
+func (ar *accessRec) NewRoom (userId, roomId int) {}
+
+
 type request struct {
 	Request string `json:"request"`
 	Body json.RawMessage `json:"body"`
@@ -17,6 +64,7 @@ type request struct {
 
 const (
 	messageReq = "message"
+	whoamiReq = "whoami"
 	listRoomsReq = "list-rooms"
 	inRoomsReq = "in-rooms"
 	enterReq = "enter"
@@ -34,6 +82,7 @@ type response struct {
 const (
 	errorResp = "error"
 	messageResp = "message"
+	whoamiResp = "whoami"
 	updateMessageResp = "update-message"
 	listRoomsResp = "list-rooms"
 	inRoomsResp = "in-rooms"
@@ -68,6 +117,10 @@ type hubMessageData struct {
 	Data interface {} `json:"data"`
 }
 
+type whoamiResponse struct {
+	User UserEntry `json:"user"`
+	Perm PermFlags  `json:"perm"`
+}
 
 type listRoomsResponse struct {
 	Rooms []RoomEntry `json:"rooms"`
@@ -91,6 +144,7 @@ type enterRequest struct {
 type enterResponse struct {
 	RoomId int `json:"roomId"`
 	User UserEntry `json:"user"`
+	Perm PermFlags  `json:"perm"`
 }
 
 type leaveRequest struct {
@@ -262,10 +316,11 @@ type protoRec struct {
 	hub hub.Hub
 	users UserRegistry
 	rooms RoomRegistry
+	access AccessController
 	handlers map[string]requestHandler
 }
 
-func New (hub hub.Hub, users UserRegistry, rooms RoomRegistry) Proto {
+func New (hub hub.Hub, users UserRegistry, rooms RoomRegistry, access AccessController) Proto {
 	if hub == nil {
 		panic("no chat hub")
 	}
@@ -278,11 +333,16 @@ func New (hub hub.Hub, users UserRegistry, rooms RoomRegistry) Proto {
 		panic("no room registry")
 	}
 
-	p := &protoRec {hub: hub, users: users, rooms: rooms}
+	if access == nil {
+		panic("no access controller")
+	}
+
+	p := &protoRec {hub: hub, users: users, rooms: rooms, access: access}
 
 	hs := make(map[string]requestHandler)
 
 	hs[messageReq] = p.newMessage
+	hs[whoamiReq] = p.whoami
 	hs[listRoomsReq] = p.listRooms
 	hs[inRoomsReq] = p.inRooms
 	hs[enterReq] = p.enterRoom
@@ -357,7 +417,20 @@ func (p *protoRec) decodeBody (c Conn, body []byte, v interface {}) bool {
 	return false
 }
 
+func (p *protoRec) whoami (c Conn, body []byte) {
+	uid := c.UserId()
+	user, _ := p.users.User(uid)
+	perm := p.access.GlobalPerms(uid)
+	resp := &response {whoamiResp, whoamiResponse {user, perm}}
+	p.hub.ConnNotice(c.Id(), resp)
+}
+
 func (p *protoRec) listRooms (c Conn, body []byte) {
+	if !p.access.HasGlobalPerm(c.UserId(), listRoomsPerm) {
+		p.respondError(c, "you cannot list rooms")
+		return
+	}
+
 	resp := &response {listRoomsResp, listRoomsResponse {p.rooms.ListRooms()}}
 	p.hub.ConnNotice(c.Id(), resp)
 }
@@ -383,6 +456,12 @@ func (p *protoRec) createRoom (c Conn, body []byte) {
 		return
 	}
 
+	uid := c.UserId()
+	if !p.access.HasGlobalPerm(uid, createRoomPerm) {
+		p.respondError(c, "you cannot create a room")
+		return
+	}
+
 	name := strings.TrimSpace(b.Name)
 	if name == "" {
 		p.respondError(c, "empty room name")
@@ -395,6 +474,7 @@ func (p *protoRec) createRoom (c Conn, body []byte) {
 		return
 	}
 
+	p.access.NewRoom(uid, rid)
 	resp := &response {newRoomResp, newRoomResponse {rid, name}}
 	p.hub.GlobalNotice(resp)
 }
@@ -402,6 +482,11 @@ func (p *protoRec) createRoom (c Conn, body []byte) {
 func (p *protoRec) enterRoom (c Conn, body []byte) {
 	b := &enterRequest {}
 	if !p.decodeBody(c, body, b) {
+		return
+	}
+
+	if !p.access.HasRoomPerm(c.UserId(), b.RoomId, readPerm) {
+		p.respondError(c, "you cannot enter this room")
 		return
 	}
 
@@ -413,7 +498,8 @@ func (p *protoRec) enterRoom (c Conn, body []byte) {
 	}
 
 	user, _ := p.users.User(uid)
-	resp := &response {enterResp, enterResponse {b.RoomId, user}}
+	perm := p.access.RoomPerms(uid, b.RoomId)
+	resp := &response {enterResp, enterResponse {b.RoomId, user, perm}}
 	p.hub.RoomNotice(b.RoomId, resp)
 }
 
@@ -480,6 +566,11 @@ func (p *protoRec) listMessages (c Conn, body []byte) {
 func (p *protoRec) newMessage (c Conn, body []byte) {
 	b := &messageRequest {}
 	if !p.decodeBody(c, body, b) {
+		return
+	}
+
+	if !p.access.HasRoomPerm(c.UserId(), b.RoomId, writePerm) {
+		p.respondError(c, "you cannot post messages in this room")
 		return
 	}
 
