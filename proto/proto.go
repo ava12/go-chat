@@ -72,6 +72,7 @@ const (
 	newRoomReq = "new-room"
 	listUsersReq = "list-users"
 	listMessagesReq = "list-messages"
+	userInfoReq = "user-info"
 )
 
 type response struct {
@@ -91,6 +92,7 @@ const (
 	newRoomResp = "new-room"
 	listUsersResp = "list-users"
 	listMessagesResp = "list-messages"
+	userInfoResp
 )
 
 type errorResponse struct {
@@ -176,6 +178,13 @@ type listMessagesResponse struct {
 	FirstMessageId int `json:"firstMessageId"`
 	Messages MessageList `json:"messages"`
 }
+
+type userInfoRequest struct {
+	UserId int `json:"userId"`
+}
+
+type userInfoResponse UserEntry
+
 
 type MessageEntry struct {
 	RoomId int `json:"roomId"`
@@ -349,6 +358,7 @@ func New (hub hub.Hub, users UserRegistry, rooms RoomRegistry, access AccessCont
 	hs[leaveReq] = p.leaveRoom
 	hs[listUsersReq] = p.listUsers
 	hs[listMessagesReq] = p.listMessages
+	hs[userInfoReq] = p.userInfo
 
 	p.handlers = hs
 	return p
@@ -560,6 +570,22 @@ func (p *protoRec) listMessages (c Conn, body []byte) {
 	}
 
 	resp := &response {listMessagesResp, listMessagesResponse {b.RoomId, b.FirstMessageId, result}}
+	p.hub.ConnNotice(c.Id(), resp)
+}
+
+func (p *protoRec) userInfo (c Conn, body []byte) {
+	b := &userInfoRequest {}
+	if !p.decodeBody(c, body, b) {
+		return
+	}
+
+	result, has := p.users.User(b.UserId)
+	if !has {
+		p.respondError(c, "user not found")
+		return
+	}
+
+	resp := &response {userInfoResp, userInfoResponse(result)}
 	p.hub.ConnNotice(c.Id(), resp)
 }
 
