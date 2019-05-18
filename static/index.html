@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Просто чат</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/vue"></script>
+<script src="chat.js"></script>
+<script src="app.js"></script>
+</head>
+
+<body>
+<script>
+</script>
+
+<div id="content">
+
+<div class="login" v-if="state == states.login">
+Представьтесь, пожалуйста:<br>
+<input type="text" maxlength="20" v-model="userName"><br>
+<input type="button" value="Это я" @click="login">
+</div>
+
+<div class="chat" v-if="state == states.chat">
+
+<div class="chat-rooms">
+<h1>Комнаты<span class="new-button" title="создать новую комнату" @click="newRoom">+</span></h1>
+<div class="list">
+<ul>
+<li v-for="room in chat.roomList.items" :class="{open: room.isIn, new: room.newMessage}" @click="selectRoom(room.id)">{{ room.name }}</li>
+</ul>
+</div>
+</div>
+
+<div class="chat-title">
+<div v-if="chat.currentRoom">{{ chat.currentRoom.name }}</div>
+<button class="close-button" title="выйти из комнаты" @click="leaveRoom">&#x2a2f;</button>
+</div>
+
+<div class="chat-user">
+<div>{{ chat.users[chat.userId].name }}</div>
+<button class="close-button" title="отключиться от сервера" @click="logout">&#x2a2f;</button>
+</div>
+
+<div class="chat-users">
+<h1>В комнате</h1>
+<div class="list" v-if="chat.currentRoom">
+<ul>
+<li v-for="user in chat.currentRoom.users.items">{{ user.name }}</li>
+</ul>
+</div>
+</div>
+
+<div class="chat-messages list">
+<table v-if="chat.currentRoom">
+<tr v-for="message in chat.currentRoom.messages">
+<th :class="message.user.color">{{ message.user.name }}<br><small>{{ message.timeText }}</small></th>
+<td><div :class="message.user.color">{{ message.text }}</div></td>
+</tr>
+</table>
+<a :name="chat.currentId"> </a>
+</div>
+
+<div class="chat-input">
+<textarea v-model="messageText" @keypress.enter.exact.prevent="sendMessage" id="input"></textarea>
+<div>
+<input type="button" value="Отправить" title="отправить сообщение (Enter)" @click="sendMessage"><br>
+<input type="button" value="&#x23ce;" title="новая строка (Shift-Enter)" @click="addNewline">
+</div>
+</div>
+
+</div>
+
+</div>
+</body>
+</html>
