@@ -12,6 +12,7 @@ type Conn interface {
 	NewMessage (m *MessageEntry)
 	UpdateMessage (m *MessageEntry)
 	Notice (data interface {})
+	Close ()
 }
 
 type MessageEntry struct {
@@ -30,41 +31,6 @@ const (
 )
 
 const taskQueueLen = 10
-
-type Hub interface {
-	SetSenders (count int)
-	SetFlushDelay (delay time.Duration)
-	SetFlushItems (count int)
-	SetFlushThreshold (count int)
-
-	Start ()
-	Stop ()
-
-	Connect (c Conn) error
-	Disconnect (connId int)
-	IsConnected (connId int) bool
-	Connection (connId int) Conn
-
-	NewRoom (roomId, lastMessageId int, userIds []int)
-	DeleteRoom (roomId int)
-	EnterRoom (userId, roomId int) error
-	LeaveRoom (userId, roomId int)
-
-	NewMessage (connId, roomId int, data interface {}) (messageId int, e error)
-	UpdateMessage (roomId, messageId int, data interface {}) error
-	ConnNotice (connId int, data interface {}) error
-	UserNotice (userId int, data interface {}) error
-	RoomNotice (roomId int, data interface {}) error
-	GlobalNotice (data interface {}) error
-
-	Messages (userId, roomId, firstId, count int) (MessageList, error)
-	UserRoomIds (userId int) []int
-	IsInRoom (userId, roomId int) bool
-	OnlineUserIds () []int
-	RoomUserIds (roomId int) []int
-	UserConnIds (userId int) []int
-	UserIsConnected (userId int) bool
-}
 
 
 type MessageStorage interface {
@@ -144,7 +110,7 @@ type parcelRec struct {
 	Func sendFunc
 }
 
-type hubRec struct {
+type Hub struct {
 	storage MessageStorage
 
 	flushLock5 sync.Mutex
@@ -173,12 +139,12 @@ type hubRec struct {
 
 var Stopped error = errors.New("hub is stopped")
 
-func New (storage MessageStorage) Hub {
+func New (storage MessageStorage) *Hub {
 	if storage == nil {
 		panic("no message storage")
 	}
 
-	result := &hubRec {
+	result := &Hub {
 		storage: storage,
 		flushDelay: defaultFlushDelay,
 		flushItems: defaultFlushItems,
@@ -193,7 +159,7 @@ func New (storage MessageStorage) Hub {
 	return result
 }
 
-func (h *hubRec) flush () {
+func (h *Hub) flush () {
 	h.flushLock5.Lock()
 	defer h.flushLock5.Unlock()
 	h.messageLock10.RLock()
@@ -221,11 +187,11 @@ func (h *hubRec) flush () {
 	}
 }
 
-func (h *hubRec) SetSenders (count int) {
+func (h *Hub) SetSenders (count int) {
 	h.senderCnt = count
 }
 
-func (h *hubRec) SetFlushDelay (delay time.Duration) {
+func (h *Hub) SetFlushDelay (delay time.Duration) {
 	h.flushLock5.Lock()
 	defer h.flushLock5.Unlock()
 
@@ -242,21 +208,21 @@ func (h *hubRec) SetFlushDelay (delay time.Duration) {
 	h.flushDelay = delay
 }
 
-func (h *hubRec) SetFlushItems (count int) {
+func (h *Hub) SetFlushItems (count int) {
 	h.flushLock5.Lock()
 	defer h.flushLock5.Unlock()
 
 	h.flushItems = count
 }
 
-func (h *hubRec) SetFlushThreshold (count int) {
+func (h *Hub) SetFlushThreshold (count int) {
 	h.flushLock5.Lock()
 	defer h.flushLock5.Unlock()
 
 	h.flushThreshold = count
 }
 
-func (h *hubRec) cleanup () {
+func (h *Hub) cleanup () {
 	if h.flushTimer != nil {
 		h.flushTimer.Stop()
 		h.flushTimer = nil
@@ -266,14 +232,14 @@ func (h *hubRec) cleanup () {
 	h.stopSignal <- true
 }
 
-func (h *hubRec) goSend () {
+func (h *Hub) goSend () {
 	for parcel := range h.parcelQueue {
 		parcel.Func(parcel.Conn)
 		h.senderGroup.Done()
 	}
 }
 
-func (h *hubRec) queueParcel (cid int, f sendFunc) {
+func (h *Hub) queueParcel (cid int, f sendFunc) {
 	c := h.conns[cid]
 	if c == nil {
 		return
@@ -283,7 +249,7 @@ func (h *hubRec) queueParcel (cid int, f sendFunc) {
 	h.parcelQueue <- &parcelRec {c, f}
 }
 
-func (h *hubRec) goPickTask () {
+func (h *Hub) goPickTask () {
 	var cid int
 
 	h.parcelQueue = make(chan *parcelRec)
@@ -328,7 +294,7 @@ func (h *hubRec) goPickTask () {
 	close(h.parcelQueue)
 }
 
-func (h *hubRec) Start () {
+func (h *Hub) Start () {
 	if h.isRunning {
 		return
 	}
@@ -348,7 +314,7 @@ func (h *hubRec) Start () {
 	}
 }
 
-func (h *hubRec) Stop () {
+func (h *Hub) Stop () {
 	if !h.isRunning {
 		return
 	}
@@ -359,12 +325,17 @@ func (h *hubRec) Stop () {
 
 	if len(h.conns) == 0 {
 		h.cleanup()
+	} else {
+		h.taskQueue <- &taskRec {globalTarget, 0, func (c Conn) {
+		c.Close()
+	}}
+
 	}
 
 	<- h.stopSignal
 }
 
-func (h *hubRec) Connect (c Conn) error {
+func (h *Hub) Connect (c Conn) error {
 	if !h.isRunning {
 		return Stopped
 	}
@@ -385,7 +356,7 @@ func (h *hubRec) Connect (c Conn) error {
 	return nil
 }
 
-func (h *hubRec) Disconnect (connId int) {
+func (h *Hub) Disconnect (connId int) {
 	h.connLock20.Lock()
 	defer h.connLock20.Unlock()
 
@@ -420,21 +391,21 @@ func (h *hubRec) Disconnect (connId int) {
 	}
 }
 
-func (h *hubRec) IsConnected (connId int) bool {
+func (h *Hub) IsConnected (connId int) bool {
 	h.connLock20.RLock()
 	defer h.connLock20.RUnlock()
 	_, is := h.conns[connId]
 	return is
 }
 
-func (h *hubRec) Connection (connId int) Conn {
+func (h *Hub) Connection (connId int) Conn {
 	h.connLock20.RLock()
 	defer h.connLock20.RUnlock()
 	return h.conns[connId]
 }
 
 
-func (h *hubRec) NewRoom (roomId, lastMessageId int, userIds []int) {
+func (h *Hub) NewRoom (roomId, lastMessageId int, userIds []int) {
 	h.roomLock30.Lock()
 	defer h.roomLock30.Unlock()
 
@@ -446,7 +417,7 @@ func (h *hubRec) NewRoom (roomId, lastMessageId int, userIds []int) {
 	h.rooms[roomId] = room
 }
 
-func (h *hubRec) DeleteRoom (roomId int) {
+func (h *Hub) DeleteRoom (roomId int) {
 	h.roomLock30.Lock()
 	defer h.roomLock30.Unlock()
 
@@ -457,7 +428,7 @@ func (h *hubRec) DeleteRoom (roomId int) {
 	delete(h.rooms, roomId)
 }
 
-func (h *hubRec) EnterRoom (userId, roomId int) error {
+func (h *Hub) EnterRoom (userId, roomId int) error {
 	h.connLock20.RLock()
 	h.roomLock30.Lock()
 	defer func () {
@@ -480,7 +451,7 @@ func (h *hubRec) EnterRoom (userId, roomId int) error {
 	return nil
 }
 
-func (h *hubRec) LeaveRoom (userId, roomId int) {
+func (h *Hub) LeaveRoom (userId, roomId int) {
 	h.connLock20.RLock()
 	h.roomLock30.Lock()
 	defer func () {
@@ -505,7 +476,7 @@ func (h *hubRec) LeaveRoom (userId, roomId int) {
 	}
 }
 
-func (h *hubRec) NewMessage (connId, roomId int, data interface {}) (messageId int, e error) {
+func (h *Hub) NewMessage (connId, roomId int, data interface {}) (messageId int, e error) {
 	if !h.isRunning {
 		return 0, Stopped
 	}
@@ -557,7 +528,7 @@ func (h *hubRec) NewMessage (connId, roomId int, data interface {}) (messageId i
 	return entry.MessageId, nil
 }
 
-func (h *hubRec) UpdateMessage (roomId, messageId int, data interface {}) error {
+func (h *Hub) UpdateMessage (roomId, messageId int, data interface {}) error {
 	if !h.isRunning {
 		return Stopped
 	}
@@ -592,7 +563,7 @@ func (h *hubRec) UpdateMessage (roomId, messageId int, data interface {}) error 
 	return errors.New("message not found")
 }
 
-func (h *hubRec) notice (target, id int, data interface {}) error {
+func (h *Hub) notice (target, id int, data interface {}) error {
 	if !h.isRunning {
 		return Stopped
 	}
@@ -604,23 +575,23 @@ func (h *hubRec) notice (target, id int, data interface {}) error {
 	return nil
 }
 
-func (h *hubRec) ConnNotice (connId int, data interface {}) error {
+func (h *Hub) ConnNotice (connId int, data interface {}) error {
 	return h.notice(connTarget, connId, data)
 }
 
-func (h *hubRec) UserNotice (userId int, data interface {}) error {
+func (h *Hub) UserNotice (userId int, data interface {}) error {
 	return h.notice(userTarget, userId, data)
 }
 
-func (h *hubRec) RoomNotice (roomId int, data interface {}) error {
+func (h *Hub) RoomNotice (roomId int, data interface {}) error {
 	return h.notice(roomTarget, roomId, data)
 }
 
-func (h *hubRec) GlobalNotice (data interface {}) error {
+func (h *Hub) GlobalNotice (data interface {}) error {
 	return h.notice(globalTarget, 0, data)
 }
 
-func (h *hubRec) Messages (userId, roomId, firstId, count int) (MessageList, error) {
+func (h *Hub) Messages (userId, roomId, firstId, count int) (MessageList, error) {
 	if count <= 0 {
 		count = 10
 	}
@@ -685,7 +656,7 @@ func (h *hubRec) Messages (userId, roomId, firstId, count int) (MessageList, err
 	return messages, nil
 }
 
-func (h *hubRec) UserRoomIds (userId int) []int {
+func (h *Hub) UserRoomIds (userId int) []int {
 	h.connLock20.RLock()
 	h.roomLock30.RLock()
 	defer func () {
@@ -708,7 +679,7 @@ func (h *hubRec) UserRoomIds (userId int) []int {
 	return roomIds
 }
 
-func (h *hubRec) IsInRoom (userId, roomId int) bool {
+func (h *Hub) IsInRoom (userId, roomId int) bool {
 	h.roomLock30.RLock()
 	defer h.roomLock30.RUnlock()
 
@@ -727,7 +698,7 @@ func (h *hubRec) IsInRoom (userId, roomId int) bool {
 }
 
 
-func (h *hubRec) OnlineUserIds () []int {
+func (h *Hub) OnlineUserIds () []int {
 	if !h.isRunning {
 		return make([]int, 0)
 	}
@@ -747,7 +718,7 @@ func (h *hubRec) OnlineUserIds () []int {
 	return userIds
 }
 
-func (h *hubRec) RoomUserIds (roomId int) []int {
+func (h *Hub) RoomUserIds (roomId int) []int {
 	h.roomLock30.RLock()
 	defer h.roomLock30.RUnlock()
 
@@ -759,7 +730,7 @@ func (h *hubRec) RoomUserIds (roomId int) []int {
 	return room.UserIds
 }
 
-func (h *hubRec) UserConnIds (userId int) []int {
+func (h *Hub) UserConnIds (userId int) []int {
 	if !h.isRunning {
 		return make([]int, 0)
 	}
@@ -770,7 +741,7 @@ func (h *hubRec) UserConnIds (userId int) []int {
 	return h.userConnIds[userId]
 }
 
-func (h *hubRec) UserIsConnected (userId int) bool {
+func (h *Hub) UserIsConnected (userId int) bool {
 	if !h.isRunning {
 		return false
 	}

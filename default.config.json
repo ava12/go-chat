@@ -1,0 +1,9 @@
+{
+	"Addr": ":8080",
+	"BaseDir": "",
+	"Dirs": {
+		"/": "static",
+		"/proto/": "proto/static",
+		"/websock/": "conn/ws/static"
+	}
+}

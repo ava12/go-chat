@@ -84,7 +84,6 @@ const (
 	errorResp = "error"
 	messageResp = "message"
 	whoamiResp = "whoami"
-	updateMessageResp = "update-message"
 	listRoomsResp = "list-rooms"
 	inRoomsResp = "in-rooms"
 	enterResp = "enter"
@@ -114,6 +113,7 @@ type textMessageData struct {
 }
 
 type messageResponse MessageEntry
+
 type hubMessageData struct {
 	MessageType int `json:"messageType"`
 	Data interface {} `json:"data"`
@@ -128,16 +128,13 @@ type listRoomsResponse struct {
 	Rooms []RoomEntry `json:"rooms"`
 }
 
-type inRoomsResponse = listRoomsResponse
+type inRoomsResponse listRoomsResponse
 
 type newRoomRequest struct {
 	Name string `json:"name"`
 }
 
-type newRoomResponse struct {
-	Id int `json:"id"`
-	Name string `json:"name"`
-}
+type newRoomResponse RoomEntry
 
 type enterRequest struct {
 	RoomId int `json:"roomId"`
@@ -200,6 +197,8 @@ type Conn interface {
 	Id () int
 	UserId () int
 	Send (m []byte)
+	Close ()
+	IsAlive () bool
 }
 
 type hubConnRec struct {
@@ -235,11 +234,15 @@ func (c *hubConnRec) NewMessage (m *hub.MessageEntry) {
 }
 
 func (c *hubConnRec) UpdateMessage (m *hub.MessageEntry) {
-	c.send(response {updateMessageResp, m})
 }
 
 func (c *hubConnRec) Notice (data interface {}) {
 	c.send(data)
+}
+
+func (c *hubConnRec) Close () {
+	c.c.Close()
+	c.c = nil
 }
 
 
@@ -313,23 +316,18 @@ type UserRegistry interface {
 }
 
 
-type Proto interface {
-	Connect (c Conn)
-	Disconnect (connId int)
-	TakeRequest (c Conn, r []byte)
-}
-
 type requestHandler func (Conn, []byte)
 
-type protoRec struct {
-	hub hub.Hub
+
+type Proto struct {
+	hub *hub.Hub
 	users UserRegistry
 	rooms RoomRegistry
 	access AccessController
 	handlers map[string]requestHandler
 }
 
-func New (hub hub.Hub, users UserRegistry, rooms RoomRegistry, access AccessController) Proto {
+func New (hub *hub.Hub, users UserRegistry, rooms RoomRegistry, access AccessController) *Proto {
 	if hub == nil {
 		panic("no chat hub")
 	}
@@ -346,7 +344,7 @@ func New (hub hub.Hub, users UserRegistry, rooms RoomRegistry, access AccessCont
 		panic("no access controller")
 	}
 
-	p := &protoRec {hub: hub, users: users, rooms: rooms, access: access}
+	p := &Proto {hub: hub, users: users, rooms: rooms, access: access}
 
 	hs := make(map[string]requestHandler)
 
@@ -364,11 +362,11 @@ func New (hub hub.Hub, users UserRegistry, rooms RoomRegistry, access AccessCont
 	return p
 }
 
-func (p *protoRec) Connect (c Conn) {
+func (p *Proto) Connect (c Conn) {
 	p.hub.Connect(&hubConnRec {c})
 }
 
-func (p *protoRec) Disconnect (connId int) {
+func (p *Proto) Disconnect (connId int) {
 	hc := p.hub.Connection(connId)
 	if hc == nil {
 		return
@@ -388,7 +386,11 @@ func (p *protoRec) Disconnect (connId int) {
 	}
 }
 
-func (p *protoRec) TakeRequest (c Conn, r []byte) {
+func (p *Proto) Stop () {
+
+}
+
+func (p *Proto) TakeRequest (c Conn, r []byte) {
 	cid := c.Id()
 	if !p.hub.IsConnected(cid) {
 		return
@@ -409,7 +411,7 @@ func (p *protoRec) TakeRequest (c Conn, r []byte) {
 	}
 }
 
-func (p *protoRec) respondError (c Conn, m string) {
+func (p *Proto) respondError (c Conn, m string) {
 	cid := c.Id()
 	uid := c.UserId()
 	response := &response {errorResp, errorResponse {m}}
@@ -417,7 +419,7 @@ func (p *protoRec) respondError (c Conn, m string) {
 	p.hub.ConnNotice(cid, response)
 }
 
-func (p *protoRec) decodeBody (c Conn, body []byte, v interface {}) bool {
+func (p *Proto) decodeBody (c Conn, body []byte, v interface {}) bool {
 	e := json.Unmarshal(body, v)
 	if e == nil {
 		return true
@@ -427,7 +429,7 @@ func (p *protoRec) decodeBody (c Conn, body []byte, v interface {}) bool {
 	return false
 }
 
-func (p *protoRec) whoami (c Conn, body []byte) {
+func (p *Proto) whoami (c Conn, body []byte) {
 	uid := c.UserId()
 	user, _ := p.users.User(uid)
 	perm := p.access.GlobalPerms(uid)
@@ -435,7 +437,7 @@ func (p *protoRec) whoami (c Conn, body []byte) {
 	p.hub.ConnNotice(c.Id(), resp)
 }
 
-func (p *protoRec) listRooms (c Conn, body []byte) {
+func (p *Proto) listRooms (c Conn, body []byte) {
 	if !p.access.HasGlobalPerm(c.UserId(), listRoomsPerm) {
 		p.respondError(c, "you cannot list rooms")
 		return
@@ -445,7 +447,7 @@ func (p *protoRec) listRooms (c Conn, body []byte) {
 	p.hub.ConnNotice(c.Id(), resp)
 }
 
-func (p *protoRec) inRooms (c Conn, body []byte) {
+func (p *Proto) inRooms (c Conn, body []byte) {
 	uid := c.UserId()
 	rids := p.hub.UserRoomIds(uid)
 	result := make([]RoomEntry, 0, len(rids))
@@ -460,7 +462,7 @@ func (p *protoRec) inRooms (c Conn, body []byte) {
 	p.hub.ConnNotice(c.Id(), resp)
 }
 
-func (p *protoRec) createRoom (c Conn, body []byte) {
+func (p *Proto) createRoom (c Conn, body []byte) {
 	b := &newRoomRequest {}
 	if !p.decodeBody(c, body, b) {
 		return
@@ -489,7 +491,7 @@ func (p *protoRec) createRoom (c Conn, body []byte) {
 	p.hub.GlobalNotice(resp)
 }
 
-func (p *protoRec) enterRoom (c Conn, body []byte) {
+func (p *Proto) enterRoom (c Conn, body []byte) {
 	b := &enterRequest {}
 	if !p.decodeBody(c, body, b) {
 		return
@@ -513,7 +515,7 @@ func (p *protoRec) enterRoom (c Conn, body []byte) {
 	p.hub.RoomNotice(b.RoomId, resp)
 }
 
-func (p *protoRec) leaveRoom (c Conn, body []byte) {
+func (p *Proto) leaveRoom (c Conn, body []byte) {
 	b := &leaveRequest {}
 	if !p.decodeBody(c, body, b) {
 		return
@@ -526,7 +528,7 @@ func (p *protoRec) leaveRoom (c Conn, body []byte) {
 	p.hub.RoomNotice(b.RoomId, resp)
 }
 
-func (p *protoRec) listUsers (c Conn, body []byte) {
+func (p *Proto) listUsers (c Conn, body []byte) {
 	b := &listUsersRequest {}
 	if !p.decodeBody(c, body, b) {
 		return
@@ -551,7 +553,7 @@ func (p *protoRec) listUsers (c Conn, body []byte) {
 	p.hub.ConnNotice(c.Id(), resp)
 }
 
-func (p *protoRec) listMessages (c Conn, body []byte) {
+func (p *Proto) listMessages (c Conn, body []byte) {
 	b := &listMessagesRequest {}
 	if !p.decodeBody(c, body, b) {
 		return
@@ -573,7 +575,7 @@ func (p *protoRec) listMessages (c Conn, body []byte) {
 	p.hub.ConnNotice(c.Id(), resp)
 }
 
-func (p *protoRec) userInfo (c Conn, body []byte) {
+func (p *Proto) userInfo (c Conn, body []byte) {
 	b := &userInfoRequest {}
 	if !p.decodeBody(c, body, b) {
 		return
@@ -589,7 +591,7 @@ func (p *protoRec) userInfo (c Conn, body []byte) {
 	p.hub.ConnNotice(c.Id(), resp)
 }
 
-func (p *protoRec) newMessage (c Conn, body []byte) {
+func (p *Proto) newMessage (c Conn, body []byte) {
 	b := &messageRequest {}
 	if !p.decodeBody(c, body, b) {
 		return
@@ -609,7 +611,7 @@ func (p *protoRec) newMessage (c Conn, body []byte) {
 	}
 }
 
-func (p *protoRec) newTextMessage (c Conn, roomId int, data []byte) {
+func (p *Proto) newTextMessage (c Conn, roomId int, data []byte) {
 	d := &textMessageData {}
 	if !p.decodeBody(c, data, d) {
 		return

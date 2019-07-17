@@ -49,6 +49,8 @@ function initChat (chat, userName) {
 }
 
 window.onload = function () {
+	location.hash = ''
+
 	chatApp = new Vue({
 		el: '#content',
 		data: {
