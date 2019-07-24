@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"sync"
 	"strings"
-	"errors"
 	"log"
 	"fmt"
 )
@@ -73,6 +72,7 @@ const (
 	listUsersReq = "list-users"
 	listMessagesReq = "list-messages"
 	userInfoReq = "user-info"
+	roomInfoReq = "room-info"
 )
 
 type response struct {
@@ -91,7 +91,8 @@ const (
 	newRoomResp = "new-room"
 	listUsersResp = "list-users"
 	listMessagesResp = "list-messages"
-	userInfoResp
+	userInfoResp = "user-info"
+	roomInfoResp = "room-info"
 )
 
 type errorResponse struct {
@@ -125,7 +126,7 @@ type whoamiResponse struct {
 }
 
 type listRoomsResponse struct {
-	Rooms []RoomEntry `json:"rooms"`
+	Rooms []RoomPermEntry `json:"rooms"`
 }
 
 type inRoomsResponse listRoomsResponse
@@ -134,7 +135,7 @@ type newRoomRequest struct {
 	Name string `json:"name"`
 }
 
-type newRoomResponse RoomEntry
+type newRoomResponse RoomPermEntry
 
 type enterRequest struct {
 	RoomId int `json:"roomId"`
@@ -143,7 +144,6 @@ type enterRequest struct {
 type enterResponse struct {
 	RoomId int `json:"roomId"`
 	User UserEntry `json:"user"`
-	Perm PermFlags  `json:"perm"`
 }
 
 type leaveRequest struct {
@@ -181,6 +181,12 @@ type userInfoRequest struct {
 }
 
 type userInfoResponse UserEntry
+
+type roomInfoRequest struct {
+	RoomId int `json:"roomId"`
+}
+
+type roomInfoResponse RoomPermEntry
 
 
 type MessageEntry struct {
@@ -230,7 +236,7 @@ func (c *hubConnRec) send (response interface {}) {
 }
 
 func (c *hubConnRec) NewMessage (m *hub.MessageEntry) {
-	c.send(response {messageResp, m})
+	c.send(response {messageResp, MessageEntry(*m)})
 }
 
 func (c *hubConnRec) UpdateMessage (m *hub.MessageEntry) {
@@ -242,13 +248,18 @@ func (c *hubConnRec) Notice (data interface {}) {
 
 func (c *hubConnRec) Close () {
 	c.c.Close()
-	c.c = nil
 }
 
 
 type RoomEntry struct {
 	Id int `json:"id"`
 	Name string `json:"name"`
+}
+
+type RoomPermEntry struct {
+	Id int `json:"id"`
+	Name string `json:"name"`
+	Perm int `json:"perm"`
 }
 
 type RoomRegistry interface {
@@ -284,7 +295,7 @@ func (mrr *memRegistryRec) CreateRoom (name string) (id int, e error) {
 
 	for _, entry := range mrr.rooms {
 		if entry.Name == name {
-			return 0, errors.New("room already exists")
+			return 0, fmt.Errorf("room \"%s\" already exists", name)
 		}
 	}
 
@@ -348,15 +359,17 @@ func New (hub *hub.Hub, users UserRegistry, rooms RoomRegistry, access AccessCon
 
 	hs := make(map[string]requestHandler)
 
-	hs[messageReq] = p.newMessage
-	hs[whoamiReq] = p.whoami
-	hs[listRoomsReq] = p.listRooms
-	hs[inRoomsReq] = p.inRooms
 	hs[enterReq] = p.enterRoom
+	hs[inRoomsReq] = p.inRooms
+	hs[listRoomsReq] = p.listRooms
 	hs[leaveReq] = p.leaveRoom
 	hs[listUsersReq] = p.listUsers
 	hs[listMessagesReq] = p.listMessages
+	hs[messageReq] = p.newMessage
+	hs[newRoomReq] = p.createRoom
+	hs[roomInfoReq] = p.roomInfo
 	hs[userInfoReq] = p.userInfo
+	hs[whoamiReq] = p.whoami
 
 	p.handlers = hs
 	return p
@@ -411,7 +424,10 @@ func (p *Proto) TakeRequest (c Conn, r []byte) {
 	}
 }
 
-func (p *Proto) respondError (c Conn, m string) {
+func (p *Proto) respondError (c Conn, m string, param ... interface {}) {
+	if len(param) > 0 {
+		m = fmt.Sprintf(m, param...)
+	}
 	cid := c.Id()
 	uid := c.UserId()
 	response := &response {errorResp, errorResponse {m}}
@@ -438,23 +454,33 @@ func (p *Proto) whoami (c Conn, body []byte) {
 }
 
 func (p *Proto) listRooms (c Conn, body []byte) {
-	if !p.access.HasGlobalPerm(c.UserId(), listRoomsPerm) {
+	uid := c.UserId()
+	if !p.access.HasGlobalPerm(uid, listRoomsPerm) {
 		p.respondError(c, "you cannot list rooms")
 		return
 	}
 
-	resp := &response {listRoomsResp, listRoomsResponse {p.rooms.ListRooms()}}
+	rooms := p.rooms.ListRooms()
+	roomPerms := make([]RoomPermEntry, 0, len(rooms))
+	for _, room := range rooms {
+		perm := p.access.RoomPerms(uid, room.Id)
+		if perm != 0 {
+			roomPerms = append(roomPerms, RoomPermEntry {room.Id, room.Name, perm})
+		}
+	}
+	resp := &response {listRoomsResp, listRoomsResponse {roomPerms}}
 	p.hub.ConnNotice(c.Id(), resp)
 }
 
 func (p *Proto) inRooms (c Conn, body []byte) {
 	uid := c.UserId()
 	rids := p.hub.UserRoomIds(uid)
-	result := make([]RoomEntry, 0, len(rids))
+	result := make([]RoomPermEntry, 0, len(rids))
 	for _, rid := range rids {
 		room, found := p.rooms.Room(rid)
 		if found {
-			result = append(result, room)
+			perm := p.access.RoomPerms(uid, room.Id)
+			result = append(result, RoomPermEntry {room.Id, room.Name, perm})
 		}
 	}
 
@@ -487,7 +513,9 @@ func (p *Proto) createRoom (c Conn, body []byte) {
 	}
 
 	p.access.NewRoom(uid, rid)
-	resp := &response {newRoomResp, newRoomResponse {rid, name}}
+	perm := p.access.RoomPerms(uid, rid)
+	p.hub.NewRoom(rid, 0, []int {})
+	resp := &response {newRoomResp, newRoomResponse {rid, name, perm}}
 	p.hub.GlobalNotice(resp)
 }
 
@@ -498,7 +526,7 @@ func (p *Proto) enterRoom (c Conn, body []byte) {
 	}
 
 	if !p.access.HasRoomPerm(c.UserId(), b.RoomId, readPerm) {
-		p.respondError(c, "you cannot enter this room")
+		p.respondError(c, "you cannot enter room #%d", b.RoomId)
 		return
 	}
 
@@ -510,8 +538,8 @@ func (p *Proto) enterRoom (c Conn, body []byte) {
 	}
 
 	user, _ := p.users.User(uid)
-	perm := p.access.RoomPerms(uid, b.RoomId)
-	resp := &response {enterResp, enterResponse {b.RoomId, user, perm}}
+	p.hub.EnterRoom(uid, b.RoomId)
+	resp := &response {enterResp, enterResponse {b.RoomId, user}}
 	p.hub.RoomNotice(b.RoomId, resp)
 }
 
@@ -536,7 +564,7 @@ func (p *Proto) listUsers (c Conn, body []byte) {
 
 	uid := c.UserId()
 	if !p.hub.IsInRoom(uid, b.RoomId) {
-		p.respondError(c, "user not in room")
+		p.respondError(c, "you are not in room #%d", b.RoomId)
 		return
 	}
 
@@ -583,11 +611,34 @@ func (p *Proto) userInfo (c Conn, body []byte) {
 
 	result, has := p.users.User(b.UserId)
 	if !has {
-		p.respondError(c, "user not found")
+		p.respondError(c, "user #%d not found", b.UserId)
 		return
 	}
 
 	resp := &response {userInfoResp, userInfoResponse(result)}
+	p.hub.ConnNotice(c.Id(), resp)
+}
+
+func (p *Proto) roomInfo (c Conn, body []byte) {
+	b := &roomInfoRequest {}
+	if !p.decodeBody(c, body, b) {
+		return
+	}
+
+	uid := c.UserId()
+	perm := p.access.RoomPerms(uid, b.RoomId)
+	if perm == 0 {
+		p.respondError(c, "room #%d not found", b.RoomId)
+		return
+	}
+
+	room, has := p.rooms.Room(b.RoomId)
+	if !has {
+		p.respondError(c, "room #%d not found", b.RoomId)
+		return
+	}
+
+	resp := &response {roomInfoResp, roomInfoResponse {room.Id, room.Name, perm}}
 	p.hub.ConnNotice(c.Id(), resp)
 }
 
@@ -598,7 +649,7 @@ func (p *Proto) newMessage (c Conn, body []byte) {
 	}
 
 	if !p.access.HasRoomPerm(c.UserId(), b.RoomId, writePerm) {
-		p.respondError(c, "you cannot post messages in this room")
+		p.respondError(c, "you cannot post messages in room #%d", b.RoomId)
 		return
 	}
 

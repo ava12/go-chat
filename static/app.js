@@ -1,118 +1,253 @@
 var chatApp
 var lastRoomId = 0
 
-function initChat (chat, userName) {
-	var users = ['это я', 'Вася', 'Петя', 'Маша']
-	var userId = users.indexOf(userName) + 1
-	if (userId < 1) {
-		users.push(userName)
-		userId = users.length
-	}
-
-	var time = (new Date()).getTime() / 1000
-
-	var rooms = [
-		['просто комната', [], []],
-		['моя комната', [userId, 2, 4], [
-			[1, 'привет всем'],
-			[2, 'йцукен'],
-			[4, ':))']
-		]],
-		['тоже комната', [userId, 3, 4], [
-			[3, ':)']
-		]]
-	]
-
-	chat.userId = userId
-	var i, j
-
-	for (i = 0; i < users.length; i++) {
-		chat.addUser(new User(i + 1, users[i], (i + 1) == userId ? null : 'col' + (i + 1)))
-	}
-
-	for (i = 0; i < rooms.length; i++) {
-		var room = new Room(i + 1, rooms[i][0])
-		chat.addRoom(room)
-		for (j = 0; j < rooms[i][1].length; j++) {
-			room.addUser(chat.users[rooms[i][1][j]])
-			if (rooms[i][1][j] == userId) {
-				room.isIn = true
-				room.untouch()
-			}
-		}
-		for (j = 0; j < rooms[i][2].length; j++) {
-			var entry = rooms[i][2][j]
-			room.messages.push(new Message(j + 1, room.id, chat.users[entry[0]], time++, entry[1]))
-		}
-		room.lastId = room.messages.length
-	}
+function makeUser (data, chat) {
+	var col = (data.id == chat.userId ? '' : 'col' + (data.id % 10))
+	return new User(data.id, data.name, col)
 }
 
-window.onload = function () {
-	location.hash = ''
+function makeRoom (data, isIn) {
+	return new Room(data.id, data.name, data.perm, !!isIn)
+}
 
-	chatApp = new Vue({
+function initApp (app) {
+	var proto = app.proto
+	var chat = app.chat
+
+	var textMessageHandler = function (roomId, messageId, userId, timestamp, text) {
+		var room = chat.getRoom(roomId)
+		if (!room) {
+			return
+		}
+
+		var user = chat.getUser(userId), message
+		if (user) {
+			message = new Message(messageId, roomId, user, timestamp, text)
+			room.addMessage(message, room.id != chat.currentRoomId)
+			return
+		}
+
+		proto.sendUserInfo(userId)
+		user = makeUser({id: userId, name: '???'}, chat)
+		message = new Message(messageId, roomId, user, timestamp, text)
+		chat.pending(userId, roomId, message)
+	}
+
+	var callbacks = {
+		error: function (message) {
+			alert(message)
+		},
+		connError: function (message) {
+			app.errorText = message
+			app.state = app.states.disconnected
+			chat.reset()
+		},
+
+		whoami: function (user, globalPerm) {
+			chat.setUserId(user.id, globalPerm)
+			chat.addUser(makeUser(user, chat))
+			chat.setUserId(user.id, globalPerm)
+		},
+		listRooms: function (rooms) {
+			for (var i = 0; i < rooms.length; i++) {
+				chat.addRoom(makeRoom(rooms[i]))
+			}
+		},
+		inRooms: function (rooms) {
+			for (var i = 0; i < rooms.length; i++) {
+				var room = chat.getRoom(rooms[i].id)
+				room.setPerm(rooms[i].perm)
+				room.userEnter(chat.getUser(chat.userId))
+				app.proto.sendListMessages(room.id, -50, 50)
+			}
+		},
+		newRoom: function (room) {
+			chat.addRoom(makeRoom(room))
+		},
+		enter: function (roomId, user) {
+			user = makeUser(user, chat)
+			chat.addUser(user)
+			chat.enterRoom(roomId, user)
+		},
+		leave: function (roomId, userId) {
+			if (userId == chat.userId && roomId == chat.currentRoomId) {
+				location.hash = ''
+			}
+			chat.leaveRoom(roomId, userId)
+		},
+		listUsers: function (roomId, users) {
+			for (var i = 0; i < users.length; i++) {
+				var user = makeUser(users[i], chat)
+				chat.addUser(user)
+				chat.enterRoom(roomId, user)
+			}
+		},
+		userInfo: function (user) {
+			chat.addUser(makeUser(user, chat))
+		},
+		roomInfo: function (room) {
+			chat.addRoom(makeRoom(room))
+		},
+		textMessage: function (roomId, messageId, userId, timestamp, text) {
+			var room = chat.getRoom(roomId)
+			if (!room) {
+				return
+			}
+
+			var smi = room.shownMessageId()
+			if (!smi && messageId > 1) {
+				return
+			}
+
+			textMessageHandler(roomId, messageId, userId, timestamp, text)
+			if (smi + 1 != messageId) {
+				proto.sendListMessages(roomId, smi + 1, messageId - smi - 1)
+			} else {
+				app.scroll()
+			}
+		},
+		listMessages: function (roomId, firstId, messages) {
+			if (!messages.length) {
+				return
+			}
+
+			var room = chat.getRoom(roomId)
+			if (!room) {
+				return
+			}
+
+			var flagNew = (roomId != chat.currentRoomId)
+			for (var i = 0; i < messages.length; i++) {
+				var m = messages[i]
+				if (m.data.messageType != proto.messageTypes.text) {
+					continue
+				}
+
+				textMessageHandler(m.roomId, m.messageId, m.userId, m.timestamp, m.data.data.text)
+			}
+
+			app.scroll()
+		}
+	}
+
+	proto.setCallbacks(callbacks)
+}
+
+function createApp () {
+	var app = new Vue({
 		el: '#content',
 		data: {
-			userName: 'это я',
+			userName: '',
 			lastRoomId: 0,
 			chat: new Chat(),
+			proto: new ChatProto(),
 			messageText: '',
-			state: 'login',
+			errorText: '',
+			state: 'init',
 			states: {
+				init: 'init',
 				login: 'login',
-				chat: 'chat'
+				connect: 'connect',
+				chat: 'chat',
+				disconnected: 'disconnected'
+			},
+			transitionalStates: {
+				init: 'Инициализация…',
+				connect: 'Подключение…',
+				disconnected: 'Подключение к серверу разорвано'
 			}
 		},
 		methods: {
+			run: function () {
+				var t = this
+				;(new Xhr()).post('/whoami', null, function (xhr) {
+					var response = xhr.getJsonResponse()
+					if (!response.user) {
+						t.state = t.states.login
+					} else {
+						t.userName = response.user.name
+						t.state = t.states.chat
+						t.connect()
+					}
+				})
+			},
+
 			login: function () {
-				initChat(this.chat, this.userName.trim())
-				this.lastRoomId = this.chat.roomList.length
-				this.state = this.states.chat
+				var t = this
+				t.state = t.states.connect
+				;(new Xhr()).post('/login', {name: t.userName}, function (xhr) {
+					var response = xhr.getJsonResponse()
+					if (!response.success) {
+						alert('Не удалось подключиться')
+						t.state = t.states.login
+					} else {
+						t.userName = response.user.name
+						t.state = t.states.chat
+						t.connect()
+					}
+				})
 			},
 
 			logout: function () {
+				;(new Xhr()).post('/logout', null, false)
+				this.proto.disconnect()
+				this.chat.reset()
+				this.chat.resetUser()
+				this.userName = ''
 				this.state = this.states.login
-				this.chat = new Chat()
 			},
 
-			rest: function () {
-				this.messageText = ''
-				chatApp.$nextTick(function () {
-					location.hash = this.chat.currentId
+			connect: function () {
+				this.errorText = ''
+				this.proto.connect(new WsConn())
+				this.proto.sendWhoami()
+				this.proto.sendListRooms()
+				this.proto.sendInRooms()
+			},
+
+			scroll: function () {
+				if (!this.chat.currentRoomId) {
+					return
+				}
+
+				app.$nextTick(function () {
+					location.hash = ''
+					location.hash = this.chat.currentRoomId
 					document.getElementById('input').focus()
 				})
 			},
 
+			rest: function () {
+				this.messageText = ''
+				document.getElementById('input').focus()
+				this.scroll()
+			},
+
 			newRoom: function () {
 				var name = prompt('Название комнаты')
+				name = name.trim()
 				if (!name) return
 
-				name = name.trim()
-				var loName = name.toLowerCase()
-				for (var id in this.chat.rooms) {
-					if (this.chat.rooms[id].name.toLowerCase() == loName) {
-						alert('такая комната уже есть')
-						return
-					}
-				}
-
-				this.lastRoomId++
-				var room = new Room(lastRoomId, name)
-				this.chat.addRoom(room)
-				this.chat.enterRoom(room.id)
+				this.proto.sendNewRoom(name)
 				this.rest()
 			},
 
 			leaveRoom: function () {
-				this.chat.leaveRoom()
-				this.messageText = ''
-				location.hash = ''
+				this.proto.sendLeave(this.chat.currentRoomId)
 				input.blur()
 			},
 
 			selectRoom: function (roomId) {
-				this.chat.enterRoom(roomId)
+				var room = this.chat.getRoom(roomId)
+				if (room.isIn) {
+					this.chat.enterRoom(roomId)
+					this.proto.sendListUsers(roomId)
+				} else {
+					this.proto.sendEnter(roomId)
+					this.proto.sendRoomInfo(roomId)
+					this.proto.sendListUsers(roomId)
+					this.proto.sendListMessages(roomId, -50, 50)
+				}
 				this.rest()
 			},
 
@@ -131,11 +266,18 @@ window.onload = function () {
 				var text = this.messageText.trim()
 				if (text == '') return
 
-				c.currentRoom.lastId++
-				var message = new Message(c.currentRoom.lastId, c.currentId, c.users[c.userId], (new Date()).getTime() / 1000, text)
-				c.currentRoom.messages.push(message)
+				this.proto.sendTextMessage(c.currentRoomId, text)
 				this.rest()
 			}
 		}
 	})
+
+	return app
+}
+
+window.onload = function () {
+	location.hash = ''
+	chatApp = createApp()
+	initApp(chatApp)
+	chatApp.run()
 }

@@ -63,12 +63,20 @@ func (msr *memStorageRec) List (roomId, firstId, count int) (MessageList, error)
 	msr.lock.RLock()
 	defer msr.lock.RUnlock()
 
+	messages := msr.rooms[roomId]
+	if len(messages) < 1 {
+		return MessageList {}, nil
+	}
+
 	firstIndex := firstId - 1
 	if firstIndex < 0 {
 		firstIndex = 0
 	}
 	lastIndex := firstIndex + count
-	return msr.rooms[roomId][firstIndex:lastIndex], nil
+	if lastIndex > len(messages) {
+		lastIndex = len(messages)
+	}
+	return messages[firstIndex:lastIndex], nil
 }
 
 func (msr *memStorageRec) Update (roomId, messageId int, data interface {}) (bool, error) {
@@ -166,7 +174,7 @@ func (h *Hub) flush () {
 	defer h.messageLock10.RUnlock()
 
 	var (i int; e error)
-	cnt := len(h.messages)
+	cnt := len(h.messages) - h.flushItems
 	if h.flushItems > 0 && cnt > 0 {
 		for i = 0; i < cnt; i += h.flushItems {
 			e = h.storage.Save(h.messages[i:i + h.flushItems])
@@ -321,8 +329,6 @@ func (h *Hub) Stop () {
 
 	h.isRunning = false
 
-	close(h.taskQueue)
-
 	if len(h.conns) == 0 {
 		h.cleanup()
 	} else {
@@ -333,6 +339,7 @@ func (h *Hub) Stop () {
 	}
 
 	<- h.stopSignal
+	close(h.taskQueue)
 }
 
 func (h *Hub) Connect (c Conn) error {

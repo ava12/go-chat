@@ -1,10 +1,13 @@
 
 WsConn = function (url) {
 	if (!url) {
-		url = '//' + location.hostname + '/ws'
+		url = 'ws://' + location.host + '/ws'
 	}
 	if (url.charAt(0) == '/' && url.charAt(1) != '/') {
-		url = '//' + location.hostname + url
+		url = '//' + location.host + url
+	}
+	if (url.charAt(0) == '/') {
+		url = 'ws:' + url
 	}
 
 	this.url = url

@@ -181,6 +181,11 @@ func (s *Server) serveLogout (w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveWs (w http.ResponseWriter, r *http.Request) {
+	if !s.running || s.stopping {
+		http.NotFoundHandler().ServeHTTP(w, r)
+		return
+	}
+
 	sess, user := s.whoami(w, r)
 	if user == nil {
 		logRequest(r, errors.New("anon"))

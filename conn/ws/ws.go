@@ -1,21 +1,23 @@
 package ws
 
 import (
-	"net/http"
 	"errors"
 	"log"
+	"net/http"
+	"time"
 	"github.com/gorilla/websocket"
 	"github.com/ava12/go-chat/proto"
 )
 
-const (
-	maxMessageSize = 65535
-)
-
-var upgrader = websocket.Upgrader {}
+var upgrader = websocket.Upgrader {
+	HandshakeTimeout: 5 * time.Second,
+	ReadBufferSize: 1024,
+	WriteBufferSize: 1024,
+}
 
 type connRec struct {
 	c *websocket.Conn
+	remoteAddr string
 	id, userId int
 	alive bool
 }
@@ -26,7 +28,7 @@ func New (w http.ResponseWriter, r *http.Request, p *proto.Proto, id, userId int
 		return nil, e
 	}
 
-	conn := &connRec {c, id, userId, true}
+	conn := &connRec {c, r.RemoteAddr, id, userId, true}
 	p.Connect(conn)
 
 	go func () {
@@ -37,7 +39,7 @@ func New (w http.ResponseWriter, r *http.Request, p *proto.Proto, id, userId int
 			}
 			if e != nil {
 				conn.alive = false
-				log.Println(e)
+				log.Printf("u%dc%d (%s) %s\n", conn.userId, conn.id, conn.remoteAddr, e.Error())
 				break
 			}
 

@@ -7,11 +7,12 @@ function ChatProto (callbacks, conn) {
 		listRooms: null, // function (rooms)
 		inRooms: null, // function (rooms)
 		newRoom: null, // function (room)
-		enter: null, // function (roomId, user, roomPerm)
+		enter: null, // function (roomId, user)
 		leave: null, // function (roomId, userId)
 		listUsers: null, // function (roomId, users)
 		listMessages: null, // function (roomId, firstMessageId, messages)
 		userInfo: null, // function (user)
+		roomInfo: null, // function (room)
 		textMessage: null, // function (roomId, messageId, userId, timestamp, text)
 		response: null, // function (responseType, responseBody)
 		connError: null // function (message)
@@ -51,6 +52,7 @@ ChatProto.prototype.responseMap = { // {response: [callback, (arg... | '*')]}
 	'list-users': ['listUsers', 'roomId', 'users'],
 	'list-messages': ['listMessages', 'roomId', 'firstMessageId', 'messages'],
 	'user-info': ['userInfo', '*'],
+	'room-info': ['roomInfo', '*'],
 	error: ['error', 'message']
 }
 
@@ -90,7 +92,7 @@ ChatProto.prototype.disconnect = function () {
 }
 
 ChatProto.prototype.takeResponse = function (response) {
-	var name, args
+	var name, args = []
 
 	switch (response.response) {
 		case 'message':
@@ -132,7 +134,7 @@ ChatProto.prototype.takeError = function (message) {
 	}
 }
 
-ChatProto.prototype.sendRequest (request) {
+ChatProto.prototype.sendRequest = function (request) {
 	if (!this.conn) {
 		this.takeError('not connected to server')
 		return
@@ -157,6 +159,10 @@ ChatProto.prototype.sendInRooms = function () {
 	this.send('in-rooms')
 }
 
+ChatProto.prototype.sendNewRoom = function (name) {
+	this.send('new-room', {name: name})
+}
+
 ChatProto.prototype.sendEnter = function (roomId) {
 	this.send('enter', {roomId: roomId})
 }
@@ -175,6 +181,10 @@ ChatProto.prototype.sendListMessages = function (roomId, firstMessageId, message
 
 ChatProto.prototype.sendUserInfo = function (userId) {
 	this.send('user-info', {userId: userId})
+}
+
+ChatProto.prototype.sendRoomInfo = function (roomId) {
+	this.send('room-info', {roomId: roomId})
 }
 
 ChatProto.prototype.sendTextMessage = function (roomId, text) {

@@ -74,6 +74,38 @@ SortedList.prototype.remove = function (id) {
 	}
 }
 
+SortedList.prototype.cutHead = function (cnt) {
+	if (cnt > 0) {
+		this.items.splice(0, cnt)
+	}
+}
+
+
+function RoomPerm (flags) {
+	this.flags = flags
+}
+
+RoomPerm.prototype.canRead = function () {
+	return !!(this.flags & 1)
+}
+
+RoomPerm.prototype.canWrite = function () {
+	return !!(this.flags & 2)
+}
+
+
+function GlobalPerm (flags) {
+	this.flags = flags
+}
+
+RoomPerm.prototype.canListRooms = function () {
+	return !!(this.flags & 1)
+}
+
+RoomPerm.prototype.canCreateRoom = function () {
+	return !!(this.flags & 2)
+}
+
 
 function User (id, name, color) {
 	this.id = +id
@@ -82,16 +114,21 @@ function User (id, name, color) {
 }
 
 
-function Room (id, name, isIn) {
+function Room (id, name, perm, isIn) {
 	this.id = +id
 	this.name = name
 	this.isIn = !!isIn
+	this.setPerm(perm)
 	this.users = new SortedList()
 
 	this.newMessage = false
 	this.messages = []
 	this.lastId = 0
-	this.newMessages = new SortedList()
+	this.newMessages = new SortedList('id', 'id')
+}
+
+Room.prototype.setPerm = function (perm) {
+	this.perm = (typeof perm == 'object' ? perm : new RoomPerm(perm))
 }
 
 Room.prototype.addUser = function (user) {
@@ -110,7 +147,7 @@ Room.prototype.userEnter = function (user) {
 Room.prototype.leave = function () {
 	this.isIn = false
 	this.newMessage = false
-	this.newMessages = {}
+	this.newMessages.clear()
 	this.users.clear()
 	this.messages.splice(0, this.messages.length)
 	this.lastId = 0
@@ -126,6 +163,41 @@ Room.prototype.touch = function () {
 	this.newMessage = false
 }
 
+Room.prototype.addMessage = function (message, flagNew) {
+	var nextId = (this.messages.length ? this.messages[this.messages.length - 1].id + 1 : 1)
+
+	if (message.id < nextId) {
+		return
+	}
+
+	if (message.id != nextId) {
+		this.newMessages.add(message)
+		return
+	}
+
+	this.messages.push(message)
+	this.newMessage = this.newMessage || flagNew
+
+	nextId++
+	var headLen = 0
+	for (var i = 0; i < this.newMessages.length; i++) {
+		message = this.newMessages[i]
+		if (message.id != nextId) {
+			break
+		}
+
+		this.messages.push(message)
+		nextId++
+		headLen++
+	}
+
+	this.newMessages.cutHead(headLen)
+}
+
+Room.prototype.shownMessageId = function () {
+	return (this.messages.length ? this.messages[this.messages.length - 1].id : 0)
+}
+
 
 function Message (id, roomId, user, timestamp, text) {
 	this.id = +id
@@ -137,19 +209,60 @@ function Message (id, roomId, user, timestamp, text) {
 }
 
 
-function Chat (userId) {
-	this.userId = +userId
+function Chat () {
+	this.userId = 0
+	this.userPerm = 0
 	this.users = {}
 	this.pendingUsers = {} // {userId: {roomId: [message]}}
 	this.rooms = {}
 	this.roomList = new SortedList()
 
 	this.currentRoom = null
-	this.currentId = 0
+	this.currentRoomId = 0
+}
+
+Chat.prototype.reset = function () {
+	var user = this.users[this.userId]
+	this.users = {}
+	if (user) {
+		this.users[user.id] = user
+	}
+	this.pendingUsers = {}
+	this.rooms = {}
+	this.roomList = new SortedList()
+	this.currentRoom = null
+	this.currentRoomId = 0
+}
+
+Chat.prototype.resetUser = function () {
+	this.userId = 0
+	this.userPerm = 0
+	this.users = {}
+}
+
+Chat.prototype.setUserId = function (id, globalPerm) {
+	this.userId = id
+	this.userPerm = (typeof globalPerm == 'object' ? globalPerm : new GlobalPerm(globalPerm))
 }
 
 Chat.prototype.addUser = function (user) {
 	this.users[user.id] = user
+	var pending = this.pendingUsers[user.id]
+	if (!pending) {
+		return
+	}
+
+	for (var roomId in pending) {
+		var room = this.rooms[roomId]
+		var flagNew = (roomId != this.currentRoomId)
+		for (var i = 0; i < pending[roomId].length; i++) {
+			var message = pending[roomId][i]
+			message.user = user
+			room.addMessage(message, flagNew)
+		}
+	}
+
+	delete this.pendingUsers[user.id]
 }
 
 Chat.prototype.addRoom = function (room) {
@@ -161,6 +274,14 @@ Chat.prototype.addRoom = function (room) {
 	this.roomList.add(room)
 }
 
+Chat.prototype.getUser = function (userId) {
+	return this.users[userId]
+}
+
+Chat.prototype.getRoom = function (roomId) {
+	return this.rooms[roomId]
+}
+
 Chat.prototype.enterRoom = function (roomId, user) {
 	if (user == undefined) {
 		user = this.users[this.userId]
@@ -168,7 +289,7 @@ Chat.prototype.enterRoom = function (roomId, user) {
 	var room = this.rooms[roomId]
 	if (user.id == this.userId || room.isIn) {
 		room.userEnter(user)
-		this.currentId = room.id
+		this.currentRoomId = room.id
 		this.currentRoom = room
 		if (user.id == this.userId) {
 			room.touch()
@@ -177,7 +298,7 @@ Chat.prototype.enterRoom = function (roomId, user) {
 }
 
 Chat.prototype.leaveRoom = function (roomId, userId) {
-	if (roomId == undefined) roomId = this.currentId
+	if (roomId == undefined) roomId = this.currentRoomId
 	if (userId == undefined) userId = this.userId
 	room = this.rooms[roomId]
 	if (!room) {
@@ -186,9 +307,22 @@ Chat.prototype.leaveRoom = function (roomId, userId) {
 
 	room.removeUser(userId)
 	if (userId == this.userId) {
-		this.currentId = 0
+		this.currentRoomId = 0
 		this.currentRoom = null
 		room.leave()
 	}
 }
 
+Chat.prototype.pending = function (userId, roomId, message) {
+	if (!this.rooms[roomId]) {
+		return
+	}
+
+	if (!this.pendingUsers[userId]) {
+		this.pendingUsers[userId] = {roomId: []}
+	}
+	if (!this.pendingUsers[userId][roomId]) {
+		this.pendingUsers[userId][roomId] = []
+	}
+	this.pendingUsers[userId][roomId].push(message)
+}
