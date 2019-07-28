@@ -2,6 +2,8 @@
 function ChatProto (callbacks, conn) {
 	this.conn = null
 	this.on = {
+		afterRecv: null, // function (response)
+		beforeSend: null, // function (request)
 		error: null, // function (message)
 		whoami: null, // function (user, globalPerm)
 		listRooms: null, // function (rooms)
@@ -117,6 +119,10 @@ ChatProto.prototype.takeResponse = function (response) {
 			}
 	}
 
+	if (this.on.afterRecv) {
+		this.on.afterRecv(response)
+	}
+
 	if (name && this.on[name]) {
 		this.on[name].apply(null, args)
 		return
@@ -140,6 +146,9 @@ ChatProto.prototype.sendRequest = function (request) {
 		return
 	}
 
+	if (this.on.beforeSend) {
+		this.on.beforeSend(request)
+	}
 	this.conn.send(request)
 }
 

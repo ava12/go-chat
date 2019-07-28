@@ -5,6 +5,7 @@
 <title>Просто чат</title>
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/vue"></script>
+<script src="misc.js"></script>
 <script src="xhr.js"></script>
 <script src="chat.js"></script>
 <script src="app.js"></script>
@@ -30,10 +31,10 @@
 <input type="button" value="Это я" @click="login">
 </div>
 
-<div class="chat" v-cloak v-show="state == states.chat">
+<div class="chat" v-cloak v-show="state == states.chat" :class="{'show-logger': showLogger, 'show-dump': loggerDump}">
 
 <div class="chat-rooms">
-<h1>Комнаты<span class="new-button" title="создать новую комнату" @click="newRoom">+</span></h1>
+<h1>Комнаты<span class="button new-button" title="создать новую комнату" @click="newRoom">+</span></h1>
 <div class="list">
 <ul>
 <li v-for="room in chat.roomList.items" :class="{open: room.isIn, new: room.newMessage}" @click="selectRoom(room.id)">{{ room.name }}</li>
@@ -41,14 +42,31 @@
 </div>
 </div>
 
+<div class="logger" v-cloak>
+<ul>
+<li v-for="item in logger.items"><small>{{ item.timeText }}</small> <span :class="item.typ" :data-dump="item.dump" @click="openDump">{{ item.name }}</span></li>
+</ul>
+<span class="button collapse-button" title="свернуть лог" @click="collapseLog">-</span>
+</div>
+
+<div class="logline" v-cloak>
+&nbsp;<small>{{ logger.last().timeText }}</small>
+<span :class="logger.last().typ">{{ logger.last().name }}</span>
+<span class="button expand-button" title="раскрыть лог" @click="expandLog">^</span>
+</div>
+
+<div class="logdump" v-cloak v-show="loggerDump" @click="closeDump">
+<pre>{{ loggerDump }}</pre>
+</div>
+
 <div class="chat-title">
 <div v-if="chat.currentRoom">{{ chat.currentRoom.name }}</div>
-<button class="close-button" title="выйти из комнаты" @click="leaveRoom">&#x2a2f;</button>
+<button class="button close-button" title="выйти из комнаты" @click="leaveRoom">&#x2a2f;</button>
 </div>
 
 <div class="chat-user" v-if="chat.users[chat.userId]">
 <div>{{ chat.users[chat.userId].name }}</div>
-<button class="close-button" title="отключиться от сервера" @click="logout">&#x2a2f;</button>
+<button class="button close-button" title="отключиться от сервера" @click="logout">&#x2a2f;</button>
 </div>
 
 <div class="chat-users">

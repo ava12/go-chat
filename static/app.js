@@ -34,9 +34,15 @@ function initApp (app) {
 	}
 
 	var callbacks = {
-		error: function (message) {
-			alert(message)
+		afterRecv: function (response) {
+			var typ = (response.response == 'error' ? 'error' : 'response')
+			app.logger.log(typ, response.response, response)
 		},
+
+		beforeSend: function (request) {
+			app.logger.log('request', request.request, request)
+		},
+
 		connError: function (message) {
 			app.errorText = message
 			app.state = app.states.disconnected
@@ -143,6 +149,9 @@ function createApp () {
 			proto: new ChatProto(),
 			messageText: '',
 			errorText: '',
+			logger: new Logger(),
+			showLogger: false,
+			loggerDump: null,
 			state: 'init',
 			states: {
 				init: 'init',
@@ -170,6 +179,23 @@ function createApp () {
 						t.connect()
 					}
 				})
+			},
+
+			expandLog: function () {
+				this.showLogger = true
+			},
+
+			collapseLog: function () {
+				this.loggerDump = null
+				this.showLogger = false
+			},
+
+			openDump: function (ev) {
+				this.loggerDump = ev.target.dataset.dump
+			},
+
+			closeDump: function () {
+				this.loggerDump = null
 			},
 
 			login: function () {

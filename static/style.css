@@ -1,5 +1,6 @@
 html, body, #content, .chat { position: absolute; width: 100%; height: 100%; margin: 0px; padding: 0px; }
 body { font-family: Verdana, sans-serif; min-width: 50em; min-height: 20em; }
+small { font-size: 0.7em; font-weight: normal; color: #000; }
 .hidden, [v-cloak] { display: none; }
 
 .trans { width: 30em; margin: 7em auto; padding: 1em; border: 2px solid; text-align: center; background: #f0f0f0; }
@@ -14,23 +15,33 @@ h1 { font-size: 0.8em; text-align: center; }
 
 .list { position: absolute; left: 0px; top: 1.5em; right: 0px; bottom: 0px; overflow: auto; }
 
-.close-button {
-	display: block; position: absolute; right: 0.3em; top: 0.3em; width: 1.5em; height: 1.5em; padding: 0px;
-	background: #c88; border: 1px solid #fff; border-radius: 0.5em; color: #fff; font-weight: bold;
+.button {
+	display: block; position: absolute; right: 0.3em; width: 1.5em; height: 1.5em; padding: 0px;
+	border: 1px solid #fff; border-radius: 0.5em; color: #fff; font-weight: bold;
 	text-align: center; line-height: 1.5em; cursor: pointer;
 }
 
-.new-button {
-	display: block; position: absolute; right: 0.3em; top: 0.3em; width: 1.5em; height: 1.5em; padding: 0px;
-	background: #8c8; border: 1px solid #fff; border-radius: 0.5em; color: #fff; font-weight: bold;
-	text-align: center; line-height: 1.5em; cursor: pointer;
-}
+.close-button { background: #c88; top: 0.3em; }
+.new-button { background: #8c8; top: 0.3em; }
+.expand-button { background: #88e; top: 0.1em; }
+.collapse-button { background: #ccc; bottom: 0.1em; }
 
-.chat-rooms { left: 0.3em; top: 0.3em; right: 75.5%; bottom: 0.3em; }
+.chat-rooms { left: 0.3em; top: 0.3em; right: 75.5%; bottom: 2.5em; }
 .chat-rooms li { color: #999; font-weight: bold; font-size: 0.75em; cursor: pointer; margin: 0.5em 0px; line-height: 1.5em; }
 .chat-rooms li:hover { background: #eff; border: 1px solid #9cc; }
 .chat-rooms li.open { color: #80cc80; }
 .chat-rooms li.open.new { color: #e0c080; }
+.show-logger>.chat-rooms { bottom: 50%; }
+
+.logger { display: none; left: 0.3em; top: 51%; right: 75.5%; bottom: 0.3em; overflow: auto; }
+.logger>ul>li { cursor: pointer; }
+.logger>ul>li.selected { background: #eee; }
+.show-logger>.logger { display: block; }
+
+.logline { left: 0.3em; right: 75.5%; bottom: 0.3em; height: 1.8em; overflow: hidden; }
+.show-logger>.logline { display: none; }
+
+.logdump { left: 25%; top: 2em; width: 30em; bottom: 2em; overflow: auto; background: #eee; z-index: 100; }
 
 .chat-title { left: 25%; top: 0.3em; right: 15%; height: 2em; }
 .chat-user { left: 85.5%; top: 0.3em; right: 0.3em; height: 2em; }
@@ -46,7 +57,6 @@ div.chat-messages>table {
 	width: 100%; table-layout: fixed; border: none; font-size: 0.8em;
 }
 div.chat-messages th { width: 10em; vertical-align: top; background: #fff; font-weight: normal; text-align: right; }
-div.chat-messages th>small { font-size: 0.7em; font-weight: normal; color: #000; }
 div.chat-messages td { background: #fff; vertical-align: top; }
 div.chat-messages td>div {
 	display: inline-block; border: 1px solid; border-radius: 0.3em; padding: 0.2em 0.4em; margin-left: 0.5em;
@@ -69,3 +79,7 @@ div.chat-messages td>div {
 .chat-input>textarea { width: 78%; height: 4em; margin: 0.3em 1%; }
 .chat-input>div { display: inline-block; width: 17%; margin: 0px 0.5%; padding: 0px; }
 .chat-input>div>input { margin: 0.2em; cursor: pointer; }
+
+.error { color: #933; }
+.request { color: #33c; }
+.response { color: #393; }
