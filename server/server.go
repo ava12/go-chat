@@ -1,50 +1,49 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log"
+	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"net/http"
-	"errors"
-	"context"
-	"encoding/json"
-	"log"
-	"strings"
+
+	"github.com/ava12/go-chat/conn/ws"
+	"github.com/ava12/go-chat/fserv"
 	"github.com/ava12/go-chat/hub"
 	"github.com/ava12/go-chat/proto"
 	"github.com/ava12/go-chat/session"
 	"github.com/ava12/go-chat/user"
-	"github.com/ava12/go-chat/conn/ws"
-	"github.com/ava12/go-chat/fserv"
 )
 
 const (
 	RefreshQueues = 2
 	RefreshPeriod = time.Minute
 
-	WsPath = "/ws"
+	WsPath     = "/ws"
 	WhoamiPath = "/whoami"
-	LoginPath = "/login"
+	LoginPath  = "/login"
 	LogoutPath = "/logout"
 
-	DefaultAddr = ":8080"
+	DefaultAddr        = ":8080"
 	DefaultSessionName = "sid"
-	DefaultSessionTtl = 365 * 86400
+	DefaultSessionTtl  = 365 * 86400
 )
 
-
 type whoamiRec struct {
-	Success bool `json:"success"`
-	User *proto.UserEntry `json:"user,omitempty"`
+	Success bool             `json:"success"`
+	User    *proto.UserEntry `json:"user,omitempty"`
 }
 
-
 type refreshItem struct {
-	conn proto.Conn
+	conn    proto.Conn
 	session *session.Session
 }
 
-func logRequest (r *http.Request, e error) {
+func logRequest(r *http.Request, e error) {
 	if e == nil {
 		return
 	}
@@ -54,49 +53,50 @@ func logRequest (r *http.Request, e error) {
 }
 
 type Server struct {
-	Addr string
+	lastConnId int64
+
+	Addr        string
 	SessionName string
-	SessionTtl int
+	SessionTtl  int
 
-	Hub *hub.Hub
-	Proto *proto.Proto
+	Hub      *hub.Hub
+	Proto    *proto.Proto
 	Sessions *session.Registry
-	Users *user.Registry
-	Http *http.Server
+	Users    *user.Registry
+	Http     *http.Server
 
-	mux *http.ServeMux
+	mux        *http.ServeMux
 	oldHandler http.Handler
 
-	waitGroup sync.WaitGroup
+	waitGroup     sync.WaitGroup
 	refreshQueues int
 	refreshPeriod time.Duration
-	refreshChans []chan refreshItem
+	refreshChans  []chan refreshItem
 
 	fs *fserv.Factory
 
-	lastConnId int64
 	starting, running, stopping bool
 }
 
-func New () *Server {
-	result := &Server {
-		Addr: DefaultAddr,
-		SessionName: DefaultSessionName,
-		SessionTtl: DefaultSessionTtl,
+func New() *Server {
+	result := &Server{
+		Addr:          DefaultAddr,
+		SessionName:   DefaultSessionName,
+		SessionTtl:    DefaultSessionTtl,
 		refreshQueues: RefreshQueues,
 		refreshPeriod: RefreshPeriod,
-		mux: http.NewServeMux(),
-		fs: fserv.NewFactory(),
+		mux:           http.NewServeMux(),
+		fs:            fserv.NewFactory(),
 	}
 
 	return result
 }
 
-func (s *Server) AddFilePath (urlPath, fsPath string) {
+func (s *Server) AddFilePath(urlPath, fsPath string) {
 	s.mux.Handle(urlPath, s.fs.Make(urlPath, fsPath))
 }
 
-func (s *Server) serve (w http.ResponseWriter, r *http.Request) {
+func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	handler, path := s.mux.Handler(r)
 	if path != "" {
 		handler.ServeHTTP(w, r)
@@ -105,15 +105,15 @@ func (s *Server) serve (w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) sessionCookie (sess *session.Session) *http.Cookie {
-	return &http.Cookie {Name: s.SessionName, Value: sess.Id(), MaxAge: s.SessionTtl}
+func (s *Server) sessionCookie(sess *session.Session) *http.Cookie {
+	return &http.Cookie{Name: s.SessionName, Value: sess.Id(), MaxAge: s.SessionTtl}
 }
 
-func deleteCookie (w http.ResponseWriter, name string) {
-	http.SetCookie(w, &http.Cookie {Name: name, MaxAge: -1})
+func deleteCookie(w http.ResponseWriter, name string) {
+	http.SetCookie(w, &http.Cookie{Name: name, MaxAge: -1})
 }
 
-func (s *Server) whoami (w http.ResponseWriter, r *http.Request) (sess *session.Session, user *proto.UserEntry) {
+func (s *Server) whoami(w http.ResponseWriter, r *http.Request) (sess *session.Session, user *proto.UserEntry) {
 	cookie, _ := r.Cookie(s.SessionName)
 	if cookie == nil {
 		return
@@ -140,7 +140,7 @@ func (s *Server) whoami (w http.ResponseWriter, r *http.Request) (sess *session.
 	return
 }
 
-func serveJson (w http.ResponseWriter, r *http.Request, data interface {}) {
+func serveJson(w http.ResponseWriter, r *http.Request, data interface{}) {
 	response, e := json.Marshal(data)
 	logRequest(r, e)
 	w.Header().Set("Content-Type", "text/json")
@@ -148,15 +148,15 @@ func serveJson (w http.ResponseWriter, r *http.Request, data interface {}) {
 	logRequest(r, e)
 }
 
-func (s *Server) serveWhoami (w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveWhoami(w http.ResponseWriter, r *http.Request) {
 	_, user := s.whoami(w, r)
-	serveJson(w, r, whoamiRec {true, user})
+	serveJson(w, r, whoamiRec{true, user})
 }
 
-func (s *Server) serveLogin (w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveLogin(w http.ResponseWriter, r *http.Request) {
 	sess, user := s.whoami(w, r)
 	if user != nil {
-		serveJson(w, r, whoamiRec {false, user})
+		serveJson(w, r, whoamiRec{false, user})
 		return
 	}
 
@@ -167,20 +167,20 @@ func (s *Server) serveLogin (w http.ResponseWriter, r *http.Request) {
 	}
 	sess = s.Sessions.NewSession(uid)
 	http.SetCookie(w, s.sessionCookie(sess))
-	serveJson(w, r, whoamiRec {true, &proto.UserEntry {uid, name}})
+	serveJson(w, r, whoamiRec{true, &proto.UserEntry{uid, name}})
 }
 
-func (s *Server) serveLogout (w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveLogout(w http.ResponseWriter, r *http.Request) {
 	sess, user := s.whoami(w, r)
 	if user != nil {
 		s.Sessions.Delete(sess.Id())
 		deleteCookie(w, s.SessionName)
 	}
 
-	serveJson(w, r, whoamiRec {true, nil})
+	serveJson(w, r, whoamiRec{true, nil})
 }
 
-func (s *Server) serveWs (w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
 	if !s.running || s.stopping {
 		http.NotFoundHandler().ServeHTTP(w, r)
 		return
@@ -202,23 +202,22 @@ func (s *Server) serveWs (w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Proto.Connect(conn)
-	s.refreshChans[int(id) % s.refreshQueues] <- refreshItem {conn, sess}
+	s.refreshChans[int(id)%s.refreshQueues] <- refreshItem{conn, sess}
 }
 
-func (s *Server) newId () int64 {
+func (s *Server) newId() int64 {
 	return atomic.AddInt64(&s.lastConnId, 1)
 }
 
-func (s *Server) reuseId (id int64) {
-	atomic.CompareAndSwapInt64(&s.lastConnId, id, id - 1)
+func (s *Server) reuseId(id int64) {
+	atomic.CompareAndSwapInt64(&s.lastConnId, id, id-1)
 }
 
-func (s *Server) init () {
+func (s *Server) init() {
 	s.mux.HandleFunc(WsPath, s.serveWs)
 	s.mux.HandleFunc(WhoamiPath, s.serveWhoami)
 	s.mux.HandleFunc(LoginPath, s.serveLogin)
 	s.mux.HandleFunc(LogoutPath, s.serveLogout)
-
 
 	if s.Users == nil {
 		s.Users = user.NewRegistry()
@@ -236,7 +235,7 @@ func (s *Server) init () {
 	if s.Http != nil {
 		s.oldHandler = s.Http.Handler
 	} else {
-		s.Http = &http.Server {Addr: s.Addr}
+		s.Http = &http.Server{Addr: s.Addr}
 	}
 
 	if s.oldHandler != nil {
@@ -246,7 +245,7 @@ func (s *Server) init () {
 	}
 }
 
-func (s *Server) start () {
+func (s *Server) start() {
 	s.Hub.Start()
 	s.waitGroup.Add(s.refreshQueues)
 	s.refreshChans = make([]chan refreshItem, 0, s.refreshQueues)
@@ -257,7 +256,7 @@ func (s *Server) start () {
 	}
 }
 
-func (s *Server) done () {
+func (s *Server) done() {
 	for _, ch := range s.refreshChans {
 		close(ch)
 	}
@@ -267,7 +266,7 @@ func (s *Server) done () {
 	s.waitGroup.Wait()
 }
 
-func (s *Server) Run () error {
+func (s *Server) Run() error {
 	if s.starting || s.running || s.stopping {
 		return errors.New("chat server already running")
 	}
@@ -286,10 +285,10 @@ func (s *Server) Run () error {
 	return e
 }
 
-func (s *Server) Stop () {
+func (s *Server) Stop() {
 	log.Println("stop request")
 	if s.running {
-		ctx, _ := context.WithTimeout(context.Background(), time.Second * 5)
+		ctx, _ := context.WithTimeout(context.Background(), time.Second*5)
 		e := s.Http.Shutdown(ctx)
 		if e != nil {
 			log.Println(e)
@@ -297,38 +296,37 @@ func (s *Server) Stop () {
 	}
 }
 
-
-func (s *Server) goRefreshSessions (queue <-chan refreshItem) {
+func (s *Server) goRefreshSessions(queue <-chan refreshItem) {
 	items := make([]*refreshItem, 0)
 	timer := time.NewTicker(s.refreshPeriod)
 
 Loop:
 	for {
 		select {
-			case <- timer.C:
-				l := len(items)
-				i := 0
-				for i < l {
-					ip := items[i]
-					if ip.conn.IsAlive() {
-						ip.session.Touch()
-						i++
-					} else {
-						l--
-						items[i] = items[l]
-						items[l] = nil
-					}
+		case <-timer.C:
+			l := len(items)
+			i := 0
+			for i < l {
+				ip := items[i]
+				if ip.conn.IsAlive() {
+					ip.session.Touch()
+					i++
+				} else {
+					l--
+					items[i] = items[l]
+					items[l] = nil
 				}
-				if l < len(items) {
-					items = items[:l]
-				}
+			}
+			if l < len(items) {
+				items = items[:l]
+			}
 
-			case item, alive := <- queue:
-				if !alive {
-					break Loop
-				}
+		case item, alive := <-queue:
+			if !alive {
+				break Loop
+			}
 
-				items = append(items, &item)
+			items = append(items, &item)
 		}
 	}
 

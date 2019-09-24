@@ -1,3 +1,7 @@
+window.onerror = function (e) {
+	alert('Ошибка: ' + e)
+	throw e
+}
 
 function formatTime (t, f) {
 	if (f == undefined) {

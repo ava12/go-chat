@@ -6,6 +6,7 @@
 *.dylib
 go-chat
 chat
+static/vue.js
 
 # Test binary, build with `go test -c`
 *.test

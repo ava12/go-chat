@@ -25,13 +25,13 @@ type config struct {
 
 func main () {
 	var e error
-/*
+
 	if len(os.Args) < 2 {
 		printHelp()
 		os.Exit(errArgs)
 	}
-*/
-	configName := "/home/alex/projects/go/src/github.com/ava12/go-chat/default.config.json"//os.Args[1]
+
+	configName := os.Args[1]
 	conf, e := readConfig(configName)
 	stop(errConfig, e)
 
