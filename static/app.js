@@ -151,6 +151,8 @@ function createApp () {
 			errorText: '',
 			logger: new Logger(),
 			showLogger: false,
+			showRooms: true,
+			showUsers: true,
 			loggerDump: null,
 			state: 'init',
 			states: {
@@ -188,6 +190,14 @@ function createApp () {
 			collapseLog: function () {
 				this.loggerDump = null
 				this.showLogger = false
+			},
+
+			toggleRooms: function (flag) {
+				this.showRooms = flag
+			},
+
+			toggleUsers: function (flag) {
+				this.showUsers = flag
 			},
 
 			openDump: function (ev) {

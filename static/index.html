@@ -34,8 +34,12 @@
 
 <div class="chat" v-cloak v-show="state == states.chat" :class="{'show-logger': showLogger, 'show-dump': loggerDump}">
 
-<div class="chat-rooms">
-<h1>Комнаты<span class="button new-button" title="создать новую комнату" @click="newRoom">+</span></h1>
+<div class="chat-rooms" v-show="showRooms">
+<h1>
+<span class="button collapse-button btn-tl" title="скрыть список комнат" @click="toggleRooms(false)">-</span>
+Комнаты
+<span class="button new-button btn-tr" title="создать новую комнату" @click="newRoom">+</span>
+</h1>
 <div class="list">
 <ul>
 <li v-for="room in chat.roomList.items" :class="{open: room.isIn, new: room.newMessage}" @click="selectRoom(room.id)">{{ room.name }}</li>
@@ -43,35 +47,43 @@
 </div>
 </div>
 
-<div class="logger" v-cloak>
+<div class="chat-rooms-collapsed" v-show="!showRooms">
+<span class="button expand-button btn-tl" title="показать список комнат" @click="toggleRooms(true)">v</span>
+<h1>Комнаты</h1>
+</div>
+
+<div class="logger" v-cloak v-show="showRooms && showLogger">
 <ul>
 <li v-for="item in logger.items"><small>{{ item.timeText }}</small> <span :class="item.typ" :data-dump="item.dump" @click="openDump">{{ item.name }}</span></li>
 </ul>
-<span class="button collapse-button" title="свернуть лог" @click="collapseLog">-</span>
+<span class="button collapse-button btn-br" title="свернуть лог" @click="collapseLog">-</span>
 </div>
 
-<div class="logline" v-cloak>
+<div class="logline" v-cloak v-show="showRooms && !showLogger">
 &nbsp;<small>{{ logger.last().timeText }}</small>
 <span :class="logger.last().typ">{{ logger.last().name }}</span>
-<span class="button expand-button" title="раскрыть лог" @click="expandLog">^</span>
+<span class="button expand-button btn-tr" title="раскрыть лог" @click="expandLog">^</span>
 </div>
 
-<div class="logdump" v-cloak v-show="loggerDump" @click="closeDump">
+<div class="logdump" v-cloak v-show="loggerDump && showRooms" @click="closeDump">
 <pre>{{ loggerDump }}</pre>
 </div>
 
 <div class="chat-title">
 <div v-if="chat.currentRoom">{{ chat.currentRoom.name }}</div>
-<button class="button close-button" title="выйти из комнаты" @click="leaveRoom">&#x2a2f;</button>
+<button class="button close-button btn-tr" title="выйти из комнаты" @click="leaveRoom">&#x2a2f;</button>
 </div>
 
-<div class="chat-user" v-if="chat.users[chat.userId]">
+<div class="chat-user" v-if="chat.users[chat.userId]" :class="{collapsed: !showUsers}">
 <div>{{ chat.users[chat.userId].name }}</div>
-<button class="button close-button" title="отключиться от сервера" @click="logout">&#x2a2f;</button>
+<button class="button close-button btn-tr" title="отключиться от сервера" @click="logout">&#x2a2f;</button>
 </div>
 
-<div class="chat-users">
-<h1>В комнате</h1>
+<div class="button expand-button btn-tr" v-show="!showUsers" title="показать список пользователей" @click="toggleUsers(true)">v</div>
+
+<div class="chat-users" v-show="showUsers">
+<h1>В комнате <span class="button collapse-button btn-tr" title="скрыть список пользователей" @click="toggleUsers(false)">-</span>
+</h1>
 <div class="list" v-if="chat.currentRoom">
 <ul>
 <li v-for="user in chat.currentRoom.users.items">{{ user.name }}</li>
@@ -79,7 +91,7 @@
 </div>
 </div>
 
-<div class="chat-messages list">
+<div class="chat-messages list" :class="{'grow-left': !showRooms, 'grow-right': !showUsers}">
 <table v-if="chat.currentRoom">
 <tr v-for="message in chat.currentRoom.messages">
 <th :class="message.user.color">{{ message.user.name }}<br><small>{{ message.timeText }}</small></th>
@@ -89,7 +101,7 @@
 <a :name="chat.currentRoomId"> </a>
 </div>
 
-<div class="chat-input" v-show="chat.currentRoom">
+<div class="chat-input" v-show="chat.currentRoom" :class="{'grow-left': !showRooms}">
 <textarea v-model="messageText" @keypress.enter.exact.prevent="sendMessage" id="input"></textarea>
 <div>
 <input type="button" value="Отправить" title="отправить сообщение (Enter)" @click="sendMessage"><br>
