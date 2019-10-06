@@ -3,7 +3,7 @@
 	"BaseDir": "",
 	"Dirs": {
 		"/": "static",
-		"/proto/": "proto/static",
+		"/proto/": "proto/simple/static",
 		"/websock/": "conn/ws/static"
 	}
 }

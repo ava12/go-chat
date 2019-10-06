@@ -11,12 +11,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ava12/go-chat/conn"
 	"github.com/ava12/go-chat/conn/ws"
 	"github.com/ava12/go-chat/fserv"
 	"github.com/ava12/go-chat/hub"
-	"github.com/ava12/go-chat/proto"
+	"github.com/ava12/go-chat/proto/simple"
 	"github.com/ava12/go-chat/session"
-	"github.com/ava12/go-chat/user"
+	ramUser "github.com/ava12/go-chat/user/ram"
+	simpleAC "github.com/ava12/go-chat/access/simple"
+	ramRoom "github.com/ava12/go-chat/room/ram"
 )
 
 const (
@@ -34,12 +37,12 @@ const (
 )
 
 type whoamiRec struct {
-	Success bool             `json:"success"`
-	User    *proto.UserEntry `json:"user,omitempty"`
+	Success bool        `json:"success"`
+	User    interface{} `json:"user,omitempty"`
 }
 
 type refreshItem struct {
-	conn    proto.Conn
+	conn    conn.Conn
 	session *session.Session
 }
 
@@ -60,9 +63,9 @@ type Server struct {
 	SessionTtl  int
 
 	Hub      *hub.Hub
-	Proto    *proto.Proto
+	Proto    *simple.Proto
 	Sessions *session.Registry
-	Users    *user.Registry
+	Users    *ramUser.Registry
 	Http     *http.Server
 
 	mux        *http.ServeMux
@@ -113,7 +116,7 @@ func deleteCookie(w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{Name: name, MaxAge: -1})
 }
 
-func (s *Server) whoami(w http.ResponseWriter, r *http.Request) (sess *session.Session, user *proto.UserEntry) {
+func (s *Server) whoami(w http.ResponseWriter, r *http.Request) (sess *session.Session, user interface{}) {
 	cookie, _ := r.Cookie(s.SessionName)
 	if cookie == nil {
 		return
@@ -136,7 +139,7 @@ func (s *Server) whoami(w http.ResponseWriter, r *http.Request) (sess *session.S
 	}
 
 	http.SetCookie(w, s.sessionCookie(sess))
-	user = &u
+	user = u
 	return
 }
 
@@ -167,7 +170,7 @@ func (s *Server) serveLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	sess = s.Sessions.NewSession(uid)
 	http.SetCookie(w, s.sessionCookie(sess))
-	serveJson(w, r, whoamiRec{true, &proto.UserEntry{uid, name}})
+	serveJson(w, r, whoamiRec{true, &ramUser.UserEntry{uid, name}})
 }
 
 func (s *Server) serveLogout(w http.ResponseWriter, r *http.Request) {
@@ -220,7 +223,7 @@ func (s *Server) init() {
 	s.mux.HandleFunc(LogoutPath, s.serveLogout)
 
 	if s.Users == nil {
-		s.Users = user.NewRegistry()
+		s.Users = ramUser.NewRegistry()
 	}
 	if s.Sessions == nil {
 		s.Sessions = session.NewRegistry()
@@ -229,7 +232,7 @@ func (s *Server) init() {
 		s.Hub = hub.New(hub.NewMemStorage())
 	}
 	if s.Proto == nil {
-		s.Proto = proto.New(s.Hub, s.Users, proto.NewRoomRegistry(), proto.NewAccessController())
+		s.Proto = simple.New(s.Hub, s.Users, ramRoom.NewRegistry(), simpleAC.NewAccessController())
 	}
 
 	if s.Http != nil {

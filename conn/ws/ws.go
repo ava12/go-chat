@@ -22,7 +22,7 @@ type connRec struct {
 	alive bool
 }
 
-func New (w http.ResponseWriter, r *http.Request, p *proto.Proto, id, userId int) (*connRec, error) {
+func New (w http.ResponseWriter, r *http.Request, p proto.Proto, id, userId int) (*connRec, error) {
 	c, e := upgrader.Upgrade(w, r, nil)
 	if e != nil {
 		return nil, e
