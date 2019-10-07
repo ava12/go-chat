@@ -16,7 +16,7 @@ import (
 	"github.com/ava12/go-chat/fserv"
 	"github.com/ava12/go-chat/hub"
 	"github.com/ava12/go-chat/proto/simple"
-	"github.com/ava12/go-chat/session"
+	ramSession "github.com/ava12/go-chat/session/ram"
 	ramUser "github.com/ava12/go-chat/user/ram"
 	simpleAC "github.com/ava12/go-chat/access/simple"
 	ramRoom "github.com/ava12/go-chat/room/ram"
@@ -43,7 +43,7 @@ type whoamiRec struct {
 
 type refreshItem struct {
 	conn    conn.Conn
-	session *session.Session
+	session *ramSession.Session
 }
 
 func logRequest(r *http.Request, e error) {
@@ -64,7 +64,7 @@ type Server struct {
 
 	Hub      *hub.Hub
 	Proto    *simple.Proto
-	Sessions *session.Registry
+	Sessions *ramSession.Registry
 	Users    *ramUser.Registry
 	Http     *http.Server
 
@@ -108,7 +108,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) sessionCookie(sess *session.Session) *http.Cookie {
+func (s *Server) sessionCookie(sess *ramSession.Session) *http.Cookie {
 	return &http.Cookie{Name: s.SessionName, Value: sess.Id(), MaxAge: s.SessionTtl}
 }
 
@@ -116,7 +116,7 @@ func deleteCookie(w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{Name: name, MaxAge: -1})
 }
 
-func (s *Server) whoami(w http.ResponseWriter, r *http.Request) (sess *session.Session, user interface{}) {
+func (s *Server) whoami(w http.ResponseWriter, r *http.Request) (sess *ramSession.Session, user interface{}) {
 	cookie, _ := r.Cookie(s.SessionName)
 	if cookie == nil {
 		return
@@ -226,7 +226,7 @@ func (s *Server) init() {
 		s.Users = ramUser.NewRegistry()
 	}
 	if s.Sessions == nil {
-		s.Sessions = session.NewRegistry()
+		s.Sessions = ramSession.NewRegistry()
 	}
 	if s.Hub == nil {
 		s.Hub = hub.New(hub.NewMemStorage())
