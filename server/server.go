@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,11 +14,9 @@ import (
 	"github.com/ava12/go-chat/conn/ws"
 	"github.com/ava12/go-chat/fserv"
 	"github.com/ava12/go-chat/hub"
-	"github.com/ava12/go-chat/proto/simple"
-	ramSession "github.com/ava12/go-chat/session/ram"
-	ramUser "github.com/ava12/go-chat/user/ram"
-	simpleAC "github.com/ava12/go-chat/access/simple"
-	ramRoom "github.com/ava12/go-chat/room/ram"
+	"github.com/ava12/go-chat/proto"
+	"github.com/ava12/go-chat/session"
+	"github.com/ava12/go-chat/user"
 )
 
 const (
@@ -43,10 +40,10 @@ type whoamiRec struct {
 
 type refreshItem struct {
 	conn    conn.Conn
-	session *ramSession.Session
+	session session.Session
 }
 
-func logRequest(r *http.Request, e error) {
+func logRequest (r *http.Request, e error) {
 	if e == nil {
 		return
 	}
@@ -63,9 +60,9 @@ type Server struct {
 	SessionTtl  int
 
 	Hub      *hub.Hub
-	Proto    *simple.Proto
-	Sessions *ramSession.Registry
-	Users    *ramUser.Registry
+	Sessions session.Registry
+	Users    user.Registry
+	Proto    proto.Proto
 	Http     *http.Server
 
 	mux        *http.ServeMux
@@ -95,11 +92,11 @@ func New() *Server {
 	return result
 }
 
-func (s *Server) AddFilePath(urlPath, fsPath string) {
+func (s *Server) AddFilePath (urlPath, fsPath string) {
 	s.mux.Handle(urlPath, s.fs.Make(urlPath, fsPath))
 }
 
-func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
+func (s *Server) serve (w http.ResponseWriter, r *http.Request) {
 	handler, path := s.mux.Handler(r)
 	if path != "" {
 		handler.ServeHTTP(w, r)
@@ -108,15 +105,15 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) sessionCookie(sess *ramSession.Session) *http.Cookie {
+func (s *Server) sessionCookie (sess session.Session) *http.Cookie {
 	return &http.Cookie{Name: s.SessionName, Value: sess.Id(), MaxAge: s.SessionTtl}
 }
 
-func deleteCookie(w http.ResponseWriter, name string) {
+func deleteCookie (w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{Name: name, MaxAge: -1})
 }
 
-func (s *Server) whoami(w http.ResponseWriter, r *http.Request) (sess *ramSession.Session, user interface{}) {
+func (s *Server) whoami (w http.ResponseWriter, r *http.Request) (sess session.Session, user interface{}) {
 	cookie, _ := r.Cookie(s.SessionName)
 	if cookie == nil {
 		return
@@ -143,7 +140,7 @@ func (s *Server) whoami(w http.ResponseWriter, r *http.Request) (sess *ramSessio
 	return
 }
 
-func serveJson(w http.ResponseWriter, r *http.Request, data interface{}) {
+func serveJson (w http.ResponseWriter, r *http.Request, data interface{}) {
 	response, e := json.Marshal(data)
 	logRequest(r, e)
 	w.Header().Set("Content-Type", "text/json")
@@ -151,29 +148,30 @@ func serveJson(w http.ResponseWriter, r *http.Request, data interface{}) {
 	logRequest(r, e)
 }
 
-func (s *Server) serveWhoami(w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveWhoami (w http.ResponseWriter, r *http.Request) {
 	_, user := s.whoami(w, r)
 	serveJson(w, r, whoamiRec{true, user})
 }
 
-func (s *Server) serveLogin(w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveLogin (w http.ResponseWriter, r *http.Request) {
 	sess, user := s.whoami(w, r)
 	if user != nil {
 		serveJson(w, r, whoamiRec{false, user})
 		return
 	}
 
-	name := strings.TrimSpace(r.PostFormValue("name"))
-	uid := s.Users.UserIdByName(name)
-	if uid == 0 {
-		uid = s.Users.AddUser(name)
+	uid, user, e := s.Users.Login(w, r)
+	if (e != nil) {
+		logRequest(r, e)
+		return
 	}
+
 	sess = s.Sessions.NewSession(uid)
 	http.SetCookie(w, s.sessionCookie(sess))
-	serveJson(w, r, whoamiRec{true, &ramUser.UserEntry{uid, name}})
+	serveJson(w, r, whoamiRec{true, user})
 }
 
-func (s *Server) serveLogout(w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveLogout (w http.ResponseWriter, r *http.Request) {
 	sess, user := s.whoami(w, r)
 	if user != nil {
 		s.Sessions.Delete(sess.Id())
@@ -183,7 +181,7 @@ func (s *Server) serveLogout(w http.ResponseWriter, r *http.Request) {
 	serveJson(w, r, whoamiRec{true, nil})
 }
 
-func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveWs (w http.ResponseWriter, r *http.Request) {
 	if !s.running || s.stopping {
 		http.NotFoundHandler().ServeHTTP(w, r)
 		return
@@ -208,31 +206,22 @@ func (s *Server) serveWs(w http.ResponseWriter, r *http.Request) {
 	s.refreshChans[int(id)%s.refreshQueues] <- refreshItem{conn, sess}
 }
 
-func (s *Server) newId() int64 {
+func (s *Server) newId () int64 {
 	return atomic.AddInt64(&s.lastConnId, 1)
 }
 
-func (s *Server) reuseId(id int64) {
+func (s *Server) reuseId (id int64) {
 	atomic.CompareAndSwapInt64(&s.lastConnId, id, id-1)
 }
 
-func (s *Server) init() {
+func (s *Server) init () {
 	s.mux.HandleFunc(WsPath, s.serveWs)
 	s.mux.HandleFunc(WhoamiPath, s.serveWhoami)
 	s.mux.HandleFunc(LoginPath, s.serveLogin)
 	s.mux.HandleFunc(LogoutPath, s.serveLogout)
 
-	if s.Users == nil {
-		s.Users = ramUser.NewRegistry()
-	}
-	if s.Sessions == nil {
-		s.Sessions = ramSession.NewRegistry()
-	}
-	if s.Hub == nil {
-		s.Hub = hub.New(hub.NewMemStorage())
-	}
-	if s.Proto == nil {
-		s.Proto = simple.New(s.Hub, s.Users, ramRoom.NewRegistry(), simpleAC.NewAccessController())
+	if s.Users == nil || s.Sessions == nil || s.Hub == nil || s.Proto == nil {
+		panic("server is not properly initialized")
 	}
 
 	if s.Http != nil {
@@ -248,7 +237,7 @@ func (s *Server) init() {
 	}
 }
 
-func (s *Server) start() {
+func (s *Server) start () {
 	s.Hub.Start()
 	s.waitGroup.Add(s.refreshQueues)
 	s.refreshChans = make([]chan refreshItem, 0, s.refreshQueues)
@@ -259,7 +248,7 @@ func (s *Server) start() {
 	}
 }
 
-func (s *Server) done() {
+func (s *Server) done () {
 	for _, ch := range s.refreshChans {
 		close(ch)
 	}
@@ -269,7 +258,7 @@ func (s *Server) done() {
 	s.waitGroup.Wait()
 }
 
-func (s *Server) Run() error {
+func (s *Server) Run () error {
 	if s.starting || s.running || s.stopping {
 		return errors.New("chat server already running")
 	}
@@ -288,7 +277,7 @@ func (s *Server) Run() error {
 	return e
 }
 
-func (s *Server) Stop() {
+func (s *Server) Stop () {
 	log.Println("stop request")
 	if s.running {
 		ctx, _ := context.WithTimeout(context.Background(), time.Second*5)
@@ -299,7 +288,7 @@ func (s *Server) Stop() {
 	}
 }
 
-func (s *Server) goRefreshSessions(queue <-chan refreshItem) {
+func (s *Server) goRefreshSessions (queue <-chan refreshItem) {
 	items := make([]*refreshItem, 0)
 	timer := time.NewTicker(s.refreshPeriod)
 

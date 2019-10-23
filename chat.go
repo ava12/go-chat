@@ -8,6 +8,13 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"github.com/ava12/go-chat/server"
+	"github.com/ava12/go-chat/hub"
+	access "github.com/ava12/go-chat/access/simple"
+	conn "github.com/ava12/go-chat/conn/ws"
+	proto "github.com/ava12/go-chat/proto/simple"
+	room "github.com/ava12/go-chat/room/ram"
+	session "github.com/ava12/go-chat/session/ram"
+	user "github.com/ava12/go-chat/user/ram"
 )
 
 const (
@@ -42,6 +49,11 @@ func main () {
 	s, e := newServer(conf)
 	os.Chdir(cwd)
 	stop(errServer, e)
+
+	s.Hub = hub.New(hub.NewMemStorage())
+	s.Sessions = session.NewRegistry()
+	s.Users = user.NewRegistry()
+	s.Proto = proto.New(s.Hub, s.Users, room.NewRegistry(), access.NewAccessController())
 
 	log.Println("starting")
 

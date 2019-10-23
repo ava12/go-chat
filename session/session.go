@@ -1,9 +1,5 @@
 package session
 
-import (
-	"time"
-)
-
 type Session interface {
 	Id () string
 	UserId () int

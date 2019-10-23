@@ -1,7 +1,9 @@
 package ram
 
 import (
+	"net/http"
 	"sync"
+	"strings"
 )
 
 type UserEntry struct {
@@ -53,4 +55,13 @@ func (r *Registry) UserIdByName (name string) int {
 	defer r.lock.RUnlock()
 
 	return r.ids[name]
+}
+
+func (r *Registry) Login (w http.ResponseWriter, re *http.Request) (int, interface {}, error) {
+	name := strings.TrimSpace(re.PostFormValue("name"))
+	uid := r.UserIdByName(name)
+	if uid == 0 {
+		uid = r.AddUser(name)
+	}
+	return uid, &UserEntry {uid, name}, nil
 }
