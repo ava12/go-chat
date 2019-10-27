@@ -5,12 +5,11 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"encoding/json"
 	"path/filepath"
 	"github.com/ava12/go-chat/server"
 	"github.com/ava12/go-chat/hub"
+	"github.com/ava12/go-chat/config"
 	access "github.com/ava12/go-chat/access/simple"
-	conn "github.com/ava12/go-chat/conn/ws"
 	proto "github.com/ava12/go-chat/proto/simple"
 	room "github.com/ava12/go-chat/room/ram"
 	session "github.com/ava12/go-chat/session/ram"
@@ -24,12 +23,6 @@ const (
 	errOther
 )
 
-type config struct {
-	Addr string
-	BaseDir string
-	Dirs map[string]string
-}
-
 func main () {
 	var e error
 
@@ -39,13 +32,13 @@ func main () {
 	}
 
 	configName := os.Args[1]
-	conf, e := readConfig(configName)
+	conf, baseDir, e := readConfig(configName)
 	stop(errConfig, e)
 
 	cwd, e := os.Getwd()
 	stop(errConfig, e)
 
-	stop(errConfig, os.Chdir(filepath.Dir(configName)))
+	stop(errConfig, os.Chdir(baseDir))
 	s, e := newServer(conf)
 	os.Chdir(cwd)
 	stop(errServer, e)
@@ -79,43 +72,43 @@ func printHelp () {
 	fmt.Println("")
 }
 
-func readConfig (name string) (*config, error) {
+func readConfig (name string) (*config.Config, string, error) {
+	var e error
 	f, e := os.Open(name)
 	if e != nil {
-		return nil, e
+		return nil, "", e
 	}
 
-	de := json.NewDecoder(f)
-	result := &config {}
-	e = de.Decode(result)
+	result := config.New()
+	e = result.ReadJson(f)
 	if e != nil {
-		return nil, e
+		return nil, "", e
 	}
 
-	if result.BaseDir == "" {
-		var dirname string
-		dirname, e = filepath.Abs(name)
-		result.BaseDir = filepath.Dir(dirname)
-	}
-	return result, e
-}
-
-func newServer (c *config) (*server.Server, error) {
-	result := server.New()
-	if c.Addr != "" {
-		result.Addr = c.Addr
+	var baseDir string
+	e = result.Section("BaseDir", &baseDir)
+	if e != nil {
+		return nil, "", e
 	}
 
-	for url, path := range c.Dirs {
-		path, e := filepath.Abs(path)
+	if baseDir == "" {
+		absName, e := filepath.Abs(name)
 		if e != nil {
-			return nil, e
+			return nil, "", e
 		}
 
-		result.AddFilePath(url, path)
+		baseDir = filepath.Dir(absName)
+	} else {
+		baseDir, e = filepath.Abs(baseDir)
 	}
 
-	return result, nil
+	return result, baseDir, e
+}
+
+func newServer (c *config.Config) (*server.Server, error) {
+
+	result, e := server.New(c)
+	return result, e
 }
 
 func goWaitForSignals (s *server.Server) {

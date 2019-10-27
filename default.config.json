@@ -1,9 +1,11 @@
 {
-	"Addr": ":8080",
 	"BaseDir": "",
-	"Dirs": {
-		"/": "static",
-		"/proto/": "proto/simple/static",
-		"/websock/": "conn/ws/static"
+	"Server": {
+		"Addr": ":8080",
+		"Dirs": {
+			"/": "static",
+			"/proto/": "proto/simple/static",
+			"/websock/": "conn/ws/static"
+		}
 	}
 }

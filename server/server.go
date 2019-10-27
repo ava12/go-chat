@@ -6,10 +6,12 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/ava12/go-chat/config"
 	"github.com/ava12/go-chat/conn"
 	"github.com/ava12/go-chat/conn/ws"
 	"github.com/ava12/go-chat/fserv"
@@ -20,6 +22,8 @@ import (
 )
 
 const (
+	configSection = "Server"
+
 	RefreshQueues = 2
 	RefreshPeriod = time.Minute
 
@@ -32,6 +36,11 @@ const (
 	DefaultSessionName = "sid"
 	DefaultSessionTtl  = 365 * 86400
 )
+
+type conf struct {
+	Addr string
+	Dirs map[string]string
+}
 
 type whoamiRec struct {
 	Success bool        `json:"success"`
@@ -78,7 +87,7 @@ type Server struct {
 	starting, running, stopping bool
 }
 
-func New() *Server {
+func New (c *config.Config) (*Server, error) {
 	result := &Server{
 		Addr:          DefaultAddr,
 		SessionName:   DefaultSessionName,
@@ -89,7 +98,22 @@ func New() *Server {
 		fs:            fserv.NewFactory(),
 	}
 
-	return result
+	sect := conf {}
+	c.Section(configSection, &sect)
+	if sect.Addr != "" {
+		result.Addr = sect.Addr
+	}
+
+	for url, path := range sect.Dirs {
+		path, e := filepath.Abs(path)
+		if e != nil {
+			return nil, e
+		}
+
+		result.AddFilePath(url, path)
+	}
+
+	return result, nil
 }
 
 func (s *Server) AddFilePath (urlPath, fsPath string) {

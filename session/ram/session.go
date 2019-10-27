@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	sess "github.com/ava12/go-chat/session"
 )
 
 func init () {
@@ -46,6 +47,7 @@ func (s *Session) Expired () bool {
 	return (ts+s.ttl < time.Now().Unix())
 }
 
+
 type Registry struct {
 	lock     sync.RWMutex
 	sessions map[string]*Session
@@ -56,7 +58,7 @@ func NewRegistry() *Registry {
 	return &Registry{sessions: make(map[string]*Session), ttl: DefaultTtl}
 }
 
-func (r *Registry) Session (id string) *Session {
+func (r *Registry) Session (id string) sess.Session {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
 
@@ -82,7 +84,7 @@ func (r *Registry) Touch (id string) bool {
 	}
 }
 
-func (r *Registry) NewSession (userId int) *Session {
+func (r *Registry) NewSession (userId int) sess.Session {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
